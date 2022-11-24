@@ -1,0 +1,983 @@
+---
+title: "Exploratory analysis for Comparative Metataxonomy"
+author: "Roberto Siani"
+date: "11.2.21"
+---
+
+DISCLAIMER:
+This script is highly opinionated (choice of tools, normalization methods, decontamination methods, palettes, themes ...). It's up to you to use it as it is or modify it as it best suits you (implying, you will have to look into the code and make those changes).
+
+# SETUP
+
+No supervision required. Installing and loading the required packages and functions.
+
+```{r, cache = TRUE, echo = FALSE, include = FALSE}
+
+# pacman to install and load libraries
+
+source("~/00_lib/scripts/helpeR.R")
+
+
+# install/load the remainder of libraries
+
+pacman::p_load(qiime2R,
+               phyloseq,
+               vegan,
+               ape,
+               microbiome,
+               decontam,
+               SRS,
+               phangorn,
+               DECIPHER,
+               MicrobiotaProcess)
+
+# this come handy to avoid specifying all the time
+
+transform = microbiome::transform
+
+# main function to import Qiime2 results, clean them and integrate in a phyloseq object
+
+objectiPhy = function(metadata,
+                      taxonomy,
+                      abundance,
+                      ASVs,
+                      control_samples) {
+
+  # metadata (mapping file)
+
+  metaTab = read.delim2(metadata,
+                        row.names = 1,
+                        colClasses = "factor") %>% 
+    select(!c(BarcodeSequence,
+              LinkerPrimerSequence,
+              ReversePrimer,
+              Description)) %>% 
+    filter(!Sample_num %in% "NTC1" &
+             !Sample_num %in% "D3" &
+             !Sample_num %in% "D7")
+
+  # taxonomy ("qiime feature-classifier"): 
+
+  read_qza = qiime2R::read_qza
+
+  p_taxTab =  read_qza(taxonomy)$data %>%
+    separate(Taxon,
+             sep = ";",
+             c("Domain",
+               "Phylum",
+               "Class",
+               "Order",
+               "Family",
+               "Genus",
+               "Species"),
+             fill = "right",
+             extra = "drop") %>%
+    as.matrix() %>%
+    gsub(x = .,
+         pattern = "[A-Z]_[0-9]__",
+         replacement = "") %>% 
+    as.data.frame() %>%
+    map_df(~ gsub(
+    pattern = "metagenome|uncultured|unidentified|Unknown",
+    replacement = NA,
+    .x)) %>%
+    mutate_if(is_character, str_trim) %>%
+    column_to_rownames("Feature.ID") %>%
+    mutate(Domain = ifelse(is.na(Domain),
+                         "U. Domain",
+                         Domain),
+         Phylum = coalesce(Phylum,
+                           ifelse(grepl("^U.", Domain),
+                                  Domain,
+                                  paste("U.", Domain))),
+         Class = coalesce(Class,
+                          ifelse(grepl("^U.", Phylum),
+                                 Phylum,
+                                 paste("U.", Phylum))),
+         Order = coalesce(Order,
+                          ifelse(grepl("^U.", Class),
+                                 Class,
+                                 paste("U.", Class))),
+         Family = coalesce(Family,
+                           ifelse(grepl("^U.", Order),
+                                  Order,
+                                  paste("U.", Order))),
+         Genus = coalesce(Genus,
+                          ifelse(grepl("^U.", Family),
+                                 Family,
+                                 paste("U.", Family))),
+         Species = coalesce(Species,
+                            ifelse(grepl("^U.", Genus),
+                                   Genus,
+                                   paste("U.", Genus))))
+  
+
+  # ASVs counts ("qiime dada2 denoise-paired")
+
+  p_abuTab = read_qza(abundance)$data %>%
+    as.data.frame()
+
+  # de-contamination and remove controls
+
+  c_abuTab = p_abuTab[!isContaminant(t(p_abuTab),
+                                   neg = c(colnames(p_abuTab)
+                                           %in% control_samples) ,
+                                   method = "prevalence",
+                                   threshold = 0.05,
+                                   batch = metaTab$Run,
+                                   normalize = T,
+                                   detailed = F), ] %>%
+    filter(rownames(.) %in%
+             rownames(p_taxTab %>%
+                        filter(!Order %in% "Chloroplast" &
+                                 !Order %in% "Mitochondria" &
+                                 !Domain %in% "Unassigned"))) %>%
+    select(!all_of(control_samples))  %>%
+    filter(rowSums(.) > 0)
+
+  # normalization by scaling 
+
+  abuTab = SRS(c_abuTab,
+                 Cmin = min(colSums(c_abuTab))) %>%
+    `rownames<-`(rownames(c_abuTab))
+
+  # filter taxonomy file
+
+  taxTab = p_taxTab %>%
+    filter(rownames(.) %in%
+             rownames(abuTab)) %>%
+    as.matrix()
+
+  # representative sequences
+
+  seqsTab = read_qza(ASVs)$data[rownames(abuTab)]
+
+  # compute phylogenetic tree
+
+  treeObj = phyDat(as(AlignSeqs(seqsTab,
+                                anchor = NA,
+                                verbose = F),
+                      "matrix"),
+                   type = "DNA") %>%
+    dist.ml(.) %>% 
+    NJ(.)
+
+  # import into phyloseq-object
+
+  phytted =  phyloseq(otu_table(abuTab,
+                                taxa_are_rows = T),
+                      phyloseq::tax_table(taxTab),
+                      sample_data(metaTab),
+                      refseq(seqsTab),
+                      phy_tree(treeObj))
+
+  return(phytted)
+
+}
+
+plotPhylogeneticTree = function(groupingVariable) {
+
+  ranks = rank_names(phytted) %>%
+    set_names()
+
+  ranks = ranks[!ranks %in% "Domain"]
+
+  phytted = phytted %>%
+ prune_taxa(core_members(.,
+                         prevalence = 0.10),
+            .)
+
+  plotter = function(x) {
+
+    phytted %>%
+      tax_glom(ranks[[x]]) %>%
+      plot_tree(label.tips = ranks[[x]],
+                color = "Phylum",
+                plot.margin = 0.1,
+                shape = groupingVariable,
+                ladderize = T,
+                text.size = 3) +
+      labs(title = ranks[[x]]) +
+      theme(legend.key = element_blank(),
+            legend.position = "bottom",
+            text = element_text(family = font_an)) +
+      scale_color_nord("aurora")
+  }
+
+  map(ranks,
+      ~plotter(.x))
+}
+
+plotRelativeAbundance = function(groupingVariable,
+                                 secondVariable) {
+
+  ranks = rank_names(phytted) %>%
+    set_names()
+
+  ranks = ranks[!ranks %in% "Domain"]
+
+  plotter = function(x) {
+    plot_composition(
+  phytted %>%
+    aggregate_top_taxa(level = ranks[[x]],
+                   top = 19) %>%
+    microbiome::transform(transform = "compositional"),
+  otu.sort = "abundance",
+  plot.type = "barplot",
+  average_by = groupingVariable) +
+      labs(y = "Relative abundance",
+       x = groupingVariable) +
+      scale_fill_manual(name = paste("Top 20 ", ranks[[x]]),
+                       values = c(nord_palettes[["silver_mine"]],
+                                  nord_palettes[["aurora"]],
+                                  nord_palettes[["algoma_forest"]],
+                                  nord_palettes[["red_mountain"]])) +
+      facet_wrap(secondVariable,
+                 scales = "free")
+  }
+
+  map(ranks,
+      ~plotter(.x))
+}
+
+plotAlpha = function(groupingVariable,
+                     referenceLevel) {
+
+  alpha_frame = 
+    phytted %>%
+    microbiome::alpha() %>%
+    merge(meta(phytted),
+          by = 0)
+
+  colnames(alpha_frame) = gsub("_",
+                               " ",
+                               colnames(alpha_frame))
+
+  plotter = function(y, x) {
+    ggplot(alpha_frame,
+           aes(x = .data[[x]],
+               y = .data[[y]],
+               fill = .data[[x]],
+               title = .data[[y]])) +
+      geom_boxplot(outlier.shape = NA) +
+      scale_fill_manual(values = pal_type) +
+      stat_compare_means(ref.group = referenceLevel,
+                         label = "p.signif",
+                         hide.ns = T,
+                         method.args = list(p.adjust.methods = "holm"),
+                         method = "t.test",
+                         size = 15,
+                         family = "Fira Sans"
+                        ) +
+      theme(legend.position = "none",
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank()) +
+      facet_grid(~site)
+  }
+
+  map(alpha_frame %>%
+        select_if(is.numeric) %>%
+        names() %>%
+        set_names(),
+      ~plotter(.x,
+               groupingVariable))
+
+}
+
+plotBetaDiversity = function(groupingVariable,
+                             groupingVariable2) {
+  
+  grid = expand_grid(method = c("CCA",
+                                "PCoA",
+                                "NMDS"),
+                     distance = c("bray",
+                                  "unifrac",
+                                  "(A+B-2*J)/(A+B-J)"))
+
+  beta_frame = pmap(
+    grid,
+    ~ordinate(phytted,
+              method = .x,
+              distance = .y))
+
+  grid = grid %>%
+    mutate(fullName = rep(c("Bray-Curtis",
+                            "Unifrac",
+                            "Jaccard"),
+                          3))
+
+  names(beta_frame) = c(paste(grid$method,
+                              "over",
+                              grid$fullName))
+
+  plotter = function(x) {
+    plot_ordination(
+      phytted,
+      ordination = beta_frame[[x]],
+      color = groupingVariable,
+      shape = groupingVariable2,
+      title = x) +
+      geom_point(size = 4) +
+      scale_color_manual(values =
+                           palette_list[[groupingVariable]])
+  }
+
+  ranks = names(beta_frame) %>%
+    set_names()
+
+  map(ranks,
+      ~plotter(.x))
+}
+
+attributeSignificance = function(x){
+  ifelse(x > 0.05, "ns",
+         ifelse(x <= 0.05 & x > 0.01, "*",
+                 ifelse(x <= 0.01 & x > 0.001, "**",
+                        ifelse(x <= 0.001 & x > 0.0001, "***", "****"))))
+}
+
+plotDESeq2 = function(deseqqed) {
+  deseqqed = deseqqed %>%
+    DESeq(fitType = "mean")
+
+  contrasts_names = resultsNames(deseqqed) %>%
+    set_names()
+
+  extractResults = function(.x) {
+    results(deseqqed,
+            format = "DataFrame",
+            alpha = 0.05,
+            pAdjustMethod = "fdr",
+            name = .x) %>%
+      merge(phytted@tax_table,
+            by = 0) %>%
+      filter(!is.na(padj) &
+               !padj > 0.05) %>%
+      arrange(desc(log2FoldChange),
+              padj) %>%
+      mutate(Significance = attributeSignificance(padj)) %>%
+      tibble()
+  }
+
+  res.deseq = map(contrasts_names,
+                  ~extractResults(.x))
+
+  plotter = function(x) {
+    ggplot(res.deseq[[x]],
+           aes(
+             x = log2(baseMean),
+             y = log2FoldChange,
+             fill = Significance)) +
+      geom_point(alpha = 0.75,
+                 shape = 22,
+                 color = "black",
+                 size = 5) +
+      scale_size(range = c(24, .1),
+                 name = "FDR-adjusted p-value") +
+      scale_fill_manual(
+        values = c("#264653","#2a9d8f","#e9c46a","#f4a261","#e76f51")) +
+      geom_label(data = res.deseq[[x]] %>%
+                   filter(padj < 0.0001),
+                 aes(label = Genus),
+                 hjust = 0,
+                 vjust = 1,
+                 show.legend = F,
+                 label.r = unit(0, "lines"),
+                 label.padding = unit(0.1, "lines"),
+                 fill = NA,
+                 color = "black",
+                 size = 3,
+                 family = "Arial Narrow") +
+      labs(title = gsub("_", " ", x))
+  }
+
+  map(contrasts_names,
+      ~plotter(.x))
+}
+
+
+```
+
+# PRE-PROCESS (1st time only)
+
+This section let you select the path for your QIIME2 artifacts. You also need to identify your negative controls for the de-contamination step. This section import the qza and mapping. The ASVs abundance table is normalized and cleaned of contamination, non-bacterial ASVs and assignment below 97 % of confidence are removed and a phyloseq-class object is generated to store all the data. You can now save your object and/or play around with shiny-phyloseq to get a first overlook.
+
+```{r, echo = FALSE, include = FALSE}
+
+# set path to QIIME2 artifacts and the sample IDs of controls (extraction, PCR ... )
+
+phytted = objectiPhy(metadata = "halden_mapping_run_no.txt",
+                     taxonomy = "taxonomy-dada2_240200e4.qza",
+                     abundance = "table_all.qza",
+                     ASVs = "rep-seqs_all.qza",
+                     control_samples = c("Juliette14",
+                                         "Juliette20",
+                                         "Juliette21",
+                                         "Juliette24",
+                                         "Juliette25",
+                                         "Juliette27",
+                                         "Juliette28",
+                                         "Juliette29",
+                                         "Juliette30"))
+
+# save phyloseq-obj as .RData to avoid repeating the lengthy computation steps
+
+save(phytted,
+     file = paste("phytted",
+                  Sys.time(),
+                  ".RData",
+                  sep = ""))
+
+# your results at a glance
+
+summarize_phyloseq(phytted)
+
+```
+
+# INPUT (After 1st time)
+
+Congratulations, now that you have your phyloseq object prepared, you can finally start to explore the microbial wonderland in your samples
+
+```{r, echo = FALSE, include = FALSE}
+
+# load your phytted dataset
+
+load("")
+
+# again, take a good look at your results. Look at the sparsity and the percentage of singletons
+
+summarize_phyloseq(phytted)
+sample_data(phytted)$type = factor(c(
+  rep("biocrust", 3), rep("initial", 2), "biocrust", "initial", "biocrust", rep("initial", 3), rep("heap", 5), "biocrust"),
+  levels = c("heap", "initial", "biocrust"))
+
+# let's look at combinations
+
+table(meta(phytted)$site,
+      meta(phytted)$type)
+
+pal_type = c("#5CC8DF", "#FFCF04", "#008A61")
+
+phytted =
+  phytted %>% 
+  prune_taxa(prevalence(., detection  = 0) >= 0.1, .)
+
+```
+
+# OUTPUT
+
+### Relative Abundance
+
+```{r}
+
+melted = phytted %>%
+ metagMisc::phyloseq_filter_top_taxa(perc = 10) %>% 
+  psmelt()
+
+plot_3 =
+  ggplot(melted) +
+  geom_bar(stat = "identity",
+           position = "fill",
+           color = "white",
+           linewidth = 0.05,
+           aes(x = type,
+               y = Abundance,
+               fill = Phylum),
+           alpha = 0.9) +
+  scale_fill_hue(l = 60, c = 60) +
+  facet_wrap(~site,
+             ncol = 4)
+
+cairo_pdf("OUT/relativeAbundance.pdf",
+    width = 16,
+    height = 16,
+    onefile = T)
+plot_3
+dev.off()
+
+```
+
+### Alpha Diversity
+
+```{r}
+
+alphaDiversity = plotAlpha("type",
+                           "initial")
+
+# multiplot
+
+a = list(alphaDiversity[["chao1"]],
+       alphaDiversity[["evenness pielou"]],
+  alphaDiversity[["diversity shannon"]],
+     alphaDiversity[["dominance simpson"]])
+
+# save all in a pdf
+
+cairo_pdf("OUT/alphaDiversity.pdf",
+    width = 16,
+    height = 16,
+    onefile = T)
+a
+dev.off()
+
+```
+
+### CCA
+ 
+```{r}
+
+## read additional metadata
+
+sampling_environment = 
+  read_tsv("20200823_abiotic.txt") %>% 
+  filter(seq.id != "Juliette7") %>% 
+  select(-c(`DON`, `TNb_g`, `Nitrit_g`, `Nitrat_g`, `Ammonium_g`, `water_perc`))
+
+
+sampling_environment$type = factor(c("biocrust", "biocrust", "biocrust", "initial", "initial", "initial", "heap", "heap", "biocrust", "biocrust", "biocrust", "initial", "initial", "initial", "heap", "heap", "heap"),
+                                   levels = c("heap", "initial", "biocrust"))
+
+sampling_environment2 =
+  sampling_environment %>% 
+  select(6:10) %>% 
+  mutate_all(scale) %>% 
+  `colnames<-`(c("pH", "EC", "Chla", "TDN", "DOC"))
+
+count_table =
+  abundances(phytted, 
+             "compositional") %>% 
+  as.data.frame()
+
+Y = 
+  sampling_environment2 %>%
+  `rownames<-`(sampling_environment$seq.id)
+
+Y_OD = 
+  sampling_environment2[9:17,] %>% 
+  `rownames<-`(sampling_environment[9:17,]$seq.id)
+
+Y_WT = 
+  sampling_environment2[1:8,] %>%
+  `rownames<-`(sampling_environment[1:8,]$seq.id)
+
+X =
+  count_table[, match(sampling_environment$seq.id, colnames(count_table))] %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  `colnames<-`(rownames(count_table))
+
+X_OD =
+  count_table[, match(sampling_environment[9:17,]$seq.id, colnames(count_table))] %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  `colnames<-`(rownames(count_table))
+
+X_WT =
+  count_table[, match(sampling_environment[1:8,]$seq.id, colnames(count_table))] %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  `colnames<-`(rownames(count_table))
+
+## CCA
+
+res_cca = 
+  cca(X ~ ., data = Y, scale = T)
+
+coordinates = 
+  res_cca$CCA$wa %>% 
+  as.data.frame() %>% 
+  rownames_to_column("seq.id") %>% 
+  left_join(sampling_environment,
+            by = "seq.id")
+
+coordinates$type = 
+  factor(coordinates$type, 
+         levels = c("heap", "initial", "biocrust"))
+
+arrows = 
+  res_cca$CCA$biplot %>% 
+  as.data.frame() %>%
+  rownames_to_column("variable")
+
+plot_1 =
+  ggplot(data = coordinates) +
+  geom_point(aes(x = CCA1,
+                 y = CCA2,
+                 color = type,
+                 shape = site),
+             size = 9) +
+  scale_color_manual(values = pal_type) +
+  geom_segment(data = arrows,
+               aes(x = 0,
+                   y = 0,
+                   xend = CCA1,
+                   yend = CCA2),
+               arrow = arrow(length = unit(0.1, "cm")),
+               linejoin = "mitre",
+               lineend = "butt",
+               color = "#bbbbbb") +
+  ggrepel::geom_text_repel(data = arrows,
+            aes(x = CCA1,
+                y = CCA2,
+                label = variable),
+            force = 2,
+            size = 12,
+            color = "#333333") +
+  scale_shape_manual(values = c(18, 20))
+
+res_cca1 = 
+  cca(X_OD ~ ., data = Y_OD, scale = T)
+
+coordinates1 = 
+  res_cca1$CCA$wa %>% 
+  as.data.frame() %>% 
+  rownames_to_column("seq.id") %>% 
+  left_join(sampling_environment,
+            by = "seq.id")
+
+coordinates1$type = 
+  factor(coordinates1$type, 
+         levels = c("heap", "initial", "biocrust"))
+
+arrows1 = 
+  res_cca1$CCA$biplot %>% 
+  as.data.frame() %>%
+  rownames_to_column("variable")
+
+plot_1b =
+  ggplot(data = coordinates1) +
+  geom_point(aes(x = CCA1,
+                 y = CCA2,
+                 color = type,
+                 shape = site),
+             size = 9) +
+  scale_color_manual(values = pal_type) +
+  geom_segment(data = arrows1,
+               aes(x = 0,
+                   y = 0,
+                   xend = CCA1,
+                   yend = CCA2),
+               arrow = arrow(length = unit(0.1, "cm")),
+               linejoin = "mitre",
+               lineend = "butt",
+               color = "#bbbbbb") +
+  ggrepel::geom_text_repel(data = arrows1,
+            aes(x = CCA1,
+                y = CCA2,
+                label = variable),
+            force = 2,
+            size = 12,
+            color = "#333333") +
+  scale_shape_manual(values = c(18))
+
+res_cca2 = 
+  cca(X_WT ~ ., data = Y_WT, scale = T)
+
+coordinates2 = 
+  res_cca2$CCA$wa %>% 
+  as.data.frame() %>% 
+  rownames_to_column("seq.id") %>% 
+  left_join(sampling_environment,
+            by = "seq.id")
+
+coordinates2$type = 
+  factor(coordinates2$type, 
+         levels = c("heap", "initial", "biocrust"))
+
+arrows2 = 
+  res_cca2$CCA$biplot %>% 
+  as.data.frame() %>%
+  rownames_to_column("variable")
+
+plot_1c =
+  ggplot(data = coordinates2) +
+  geom_point(aes(x = CCA1,
+                 y = CCA2,
+                 color = type,
+                 shape = site),
+             size = 9) +
+  scale_color_manual(values = pal_type) +
+  geom_segment(data = arrows2,
+               aes(x = 0,
+                   y = 0,
+                   xend = CCA1,
+                   yend = CCA2),
+               arrow = arrow(length = unit(0.1, "cm")),
+               linejoin = "mitre",
+               lineend = "butt",
+               color = "#bbbbbb") +
+  ggrepel::geom_text_repel(data = arrows2,
+            aes(x = CCA1,
+                y = CCA2,
+                label = variable),
+            force = 2,
+            size = 12,
+            color = "#333333",
+            max.overlaps = Inf) +
+  scale_shape_manual(values = c(20))
+
+list_plots  = list(plot_1, plot_1b, plot_1c)
+
+
+cairo_pdf("OUT/cca.pdf",
+          width = 16,
+          height = 16,
+          onefile = T)
+list_plots
+dev.off()
+
+```
+
+## PCoA
+
+```{r}
+
+## remove zero and near-zero variance variables
+
+count_table =
+  abundances(phytted) %>% 
+  as.data.frame()
+
+
+set.seed(1)
+res_pcoa =
+  ordinate(phytted,
+           "PCoA",
+           "unifrac",
+           weighted = T)
+
+covar = as.factor(paste(meta(phytted)$site, meta(phytted)$type))
+
+set.seed(1)
+
+kruskal_filter = 
+  map_dbl(t(count_table) %>% as.data.frame,
+          ~ kruskal.test(.x ~ covar, data = count_table)$p.value) %>% 
+  p.adjust("BH")
+
+
+p_load(caret)
+seedlings = vector(mode = "list", length = 18)
+set.seed(3)
+for (i in 1:17) seedlings[[i]] <- sample.int(1000, 15)  
+seedlings[[18]] <- sample.int(1000, 1)
+
+res_rf =
+  train(
+    x = t(count_table[kruskal_filter <= 0.05,]),
+    y = covar,
+    preProcess = "center",
+    tuneLength = 15,
+    trControl = trainControl(method = "cv",
+                             number = 999, 
+                             seeds=  seedlings))
+
+varImp_rf =
+  varImp(res_rf) %>%
+  pluck("importance") %>%
+  rownames_to_column("ASVs") 
+
+samples =
+  plot_ordination(transform(phytted, "compositional"),
+                  res_pcoa,
+                  type = "samples",
+                  justDF = T)
+
+species =
+  plot_ordination(transform(phytted, "compositional"),
+                  res_pcoa,
+                  type = "species",
+                  justDF = T) %>% 
+  rownames_to_column("ASVs") %>% 
+  left_join(varImp_rf) %>% 
+  replace_na(list(Overall = 0)) %>% 
+  mutate(qval_KW = kruskal_filter,
+         zscore = (Overall - mean(Overall))/sd(Overall))
+
+
+a = ggplot(species,
+       aes(x = Axis.1,
+           y = Axis.2,
+           color = ifelse(kruskal_filter <= 0.05, "DA", "NS"),
+           alpha = Overall)) + 
+  geom_jitter(shape = 20) +
+  scale_color_manual(values = c("#FF82AB", "#666666")) +
+  ggrepel::geom_text_repel(
+    aes(Axis.1, Axis.2,
+        label = ifelse(zscore >= 5, Genus, "")),
+    show.legend = F,
+    max.overlaps = Inf,
+    color = "#333333",
+    force = 2,
+    size = 7.5) +
+  ggnewscale::new_scale_colour() +
+  scale_color_manual(values = pal_type) +
+  geom_point(data = samples,
+             mapping = aes(x = Axis.1,
+                           y = Axis.2,
+                           shape = site,
+                           color = type),
+             size = 9,
+             alpha = 2/3,
+             inherit.aes = F) +
+  scale_shape_manual(values = c(18, 19)) +
+  labs(x = paste("Axis.1:", round(res_pcoa$values[1, 2], 2)),
+       y = paste("Axis.2:", round(res_pcoa$values[2, 2], 2)))
+
+
+da_abundances =
+  species %>% 
+  filter(zscore >= 5) %>% 
+  left_join(phytted %>% 
+              transform("compositional") %>% 
+              speedyseq::psmelt() %>% 
+              group_by(site, type, OTU) %>% 
+              summarise(relAbu = mean(Abundance)) %>% 
+              rename(ASVs = OTU)) %>%
+  mutate(Phylum = factor(Phylum, levels = c(sort(unique(Phylum), decreasing = T))),
+         Genus_2 = paste(Genus, ASVs)) %>% arrange(Phylum)
+  
+write_tsv(da_abundances %>% 
+  pivot_wider(
+    values_from = relAbu,
+    names_from = c("site", "type"),
+    names_sep = "_"),
+  "OUT/DA_rab.tsv"
+)
+
+b = ggplot(da_abundances,
+           aes(y = Genus_2 %>% gsub(".{31}$", "", .),
+               x = site)) +
+  geom_point(
+    aes(size = log2(relAbu + 0.01),
+        color = type),
+    alpha = 2/3,
+    show.legend = F) +
+  scale_color_manual(values = pal_type,
+                     aesthetics = c("fill", "color")) +
+  scale_size(range = c(0, 20)) +
+  facet_grid(rows = vars(Phylum),
+             cols = vars(type), scales = "free", space = "free") +
+  theme(strip.text = element_blank(),
+        axis.title.y = element_blank())
+
+c = 
+  ggplot(da_abundances,
+         aes(y = Genus_2 %>% gsub(".{31}$", "", .),
+             x = 1)) +
+  geom_tile(aes(fill = Phylum),
+            width = 0.5) +
+  scale_fill_iwanthue(
+    hmin = 0,
+    hmax = 360,
+    cmin = 30,
+    cmax = 35,
+    lmin = 60,
+    lmax = 100) +
+  theme_void() + 
+  facet_grid(rows = vars(Phylum), scales = "free", space = "free") +
+  theme(legend.position = "bottom",
+        legend.box = "horizontal",
+        legend.text = element_text(family = "Fira Sans", size = 30),
+        legend.title = element_blank(),
+        strip.text = element_blank(),
+        panel.spacing = unit(0.1, "lines")) +
+  guides(fill = guide_legend(nrow = 3))
+
+bc = b + c +
+  plot_layout(widths = c(4, 1), 
+              guides = "collect")
+
+
+cairo_pdf("OUT/pcoa_rf.pdf",
+          width = 16,
+          height = 20,
+          onefile = T)
+list(a, bc)
+dev.off()
+
+
+```
+
+### CYANO ONLY
+
+```{r}
+
+
+cyano = 
+  subset_taxa(phytted, Phylum == "Cyanobacteria") %>% 
+  transform("compositional") %>% 
+  prune_taxa(taxa_sums(.) > 0, .)
+
+# assign taxonomy (download reference database here)
+
+set.seed(3)
+cyanoNewAssignment =
+  dada2::assignTaxonomy(
+    cyano@refseq,
+    refFasta = "cydrasil-v3-sequence-list.fasta.gz",
+    minBoot = 0,
+    tryRC = F,
+    taxLevels = c("ID", "Genus", "Species", "Strain"),
+    multithread = T,
+    verbose = T
+    ) %>% 
+  as.data.frame() %>% 
+  `rownames<-`(rownames(otu_table(cyano)))
+
+cyano_with_seq = 
+  cyanoNewAssignment %>% 
+  rownames_to_column("ASV") %>% 
+  left_join(readDNAStringSet("cydrasil-v3-sequence-list.fasta") %>% 
+  as.data.frame() %>% 
+  `colnames<-`("seq") %>% 
+  rownames_to_column() %>% 
+  separate(rowname, c("ID", "Genus", "Species", "Strain"), sep = ";"))
+
+seqinr::write.fasta(cyano_with_seq$seq %>% as.list(), names = cyano_with_seq$ASV, as.string = T, file.out = "new_assigment.fasta")
+
+cyano_seq = readDNAStringSet("new_assigment.fasta")
+
+cyano = 
+  phyloseq(otu_table(cyano@otu_table,
+                     taxa_are_rows = T),
+           phyloseq::tax_table(cyanoNewAssignment %>% as.matrix()),
+           sample_data(cyano@sam_data),
+           refseq(cyano_seq),
+           phy_tree(phyDat(as(AlignSeqs(cyano_seq,
+                                anchor = NA,
+                                verbose = F),
+                      "matrix"),
+                   type = "DNA") %>%
+    dist.ml(.) %>% 
+    NJ(.)))
+
+
+
+p_load(ggtree)
+
+treplot = ggtree(cyano,
+       layout = "circular",
+       size = .5) +
+  geom_rootedge(0.1, size = 0.5) +
+  geom_tiplab(aes(x = x + 0.03,
+                    label = Genus),
+              size = 6) +
+  geom_tippoint(aes(x = x  + 0.01,
+    color = type,
+    shape = site),
+    na.rm = T,
+    alpha = 3/4,
+    position = position_dodge(width = 0.025),
+    size = 4) +
+  scale_color_manual(values = pal_type) +
+  scale_shape_manual(values = c(15, 19))
+
+cairo_pdf("OUT/cyano_tree_cyd_2010.pdf",
+          width = 20, height = 20)
+treplot
+dev.off()
+
+
+```
+
