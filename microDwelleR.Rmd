@@ -1,89 +1,117 @@
 ---
-title: "Exploratory analysis for Comparative Metataxonomy"
+title: "Microbiome convergence and deterministic community assembly along successional biocrust gradients on potash salt heaps"
 author: "Roberto Siani"
-date: "11.2.21"
+date: "14.2.23"
 ---
 
 DISCLAIMER:
 This script is highly opinionated (choice of tools, normalization methods, decontamination methods, palettes, themes ...). It's up to you to use it as it is or modify it as it best suits you (implying, you will have to look into the code and make those changes).
 
-# SETUP
+# PRE-PROCESS
 
-No supervision required. Installing and loading the required packages and functions.
+Installing and loading the required packages and processing amplicon sequences into a convenient phyloseq object
 
 ```{r, cache = TRUE, echo = FALSE, include = FALSE}
 
 # pacman to install and load libraries
 
-source("~/00_lib/scripts/helpeR.R")
+pacman::p_load(
+        tidyverse,
+        patchwork,
+        pacman
+)
+
+# a minimal theme
+
+my_theme <- theme_minimal() +
+        theme(plot.margin = margin(3, 5, 0, 3),
+              text = element_text(size = 30,
+                                  family = "Fira Sans",
+                                  color = "#212121"),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.title.x = element_text(hjust = 1),
+              axis.title.y = element_text(hjust = 1),
+              legend.position = "bottom",
+              legend.justification = c(1, 0),
+              legend.margin = margin(0, 5, 3, 5),
+              legend.title = element_blank(),
+              panel.spacing.x = unit(3, "lines"),
+              panel.spacing.y = unit(3, "lines"),
+              axis.line = element_blank(),
+              panel.border = element_rect(color = "#212121", linewidth = 2 , fill = NA)
+        )
+
+theme_set(my_theme)
 
 
 # install/load the remainder of libraries
 
-pacman::p_load(qiime2R,
-               phyloseq,
-               vegan,
-               ape,
-               microbiome,
-               decontam,
-               SRS,
-               phangorn,
-               DECIPHER,
-               MicrobiotaProcess)
+pacman::p_load(
+  phyloseq,
+  microbiome)
 
-# this come handy to avoid specifying all the time
+# specify the file path for QIIME2 results and the negative control samples
 
-transform = microbiome::transform
+metadata = "halden_mapping_run_no.txt"
+taxonomy = "taxonomy-dada2_240200e4.qza"
+abundance = "table_all.qza"
+ASVs = "rep-seqs_all.qza"
+control_samples = c("Juliette14",
+                    "Juliette20",
+                    "Juliette21",
+                    "Juliette24",
+                    "Juliette25",
+                    "Juliette27",
+                    "Juliette28",
+                    "Juliette29",
+                    "Juliette30")
 
-# main function to import Qiime2 results, clean them and integrate in a phyloseq object
+# import QIIME2 results, clean them and integrate in a phyloseq object
 
-objectiPhy = function(metadata,
-                      taxonomy,
-                      abundance,
-                      ASVs,
-                      control_samples) {
+# metadata (mapping file). 
+# I filter out 3 samples that were excluded due to sequencing issue
 
-  # metadata (mapping file)
+metaTab = read.delim2(metadata,
+                      row.names = 1,
+                      colClasses = "factor") %>% 
+  select(!c(BarcodeSequence,
+            LinkerPrimerSequence,
+            ReversePrimer,
+            Description)) %>% 
+  filter(!Sample_num %in% "NTC1" &
+           !Sample_num %in% "D3" &
+           !Sample_num %in% "D7")
 
-  metaTab = read.delim2(metadata,
-                        row.names = 1,
-                        colClasses = "factor") %>% 
-    select(!c(BarcodeSequence,
-              LinkerPrimerSequence,
-              ReversePrimer,
-              Description)) %>% 
-    filter(!Sample_num %in% "NTC1" &
-             !Sample_num %in% "D3" &
-             !Sample_num %in% "D7")
+# taxonomy ("qiime feature-classifier")
+# the taxonomy is parsed to a human readable format
+# missing values are replaced by "U." (unknown) + last known taxonomy assignment
+# e.g. U. Proteobacteriaceae
 
-  # taxonomy ("qiime feature-classifier"): 
-
-  read_qza = qiime2R::read_qza
-
-  p_taxTab =  read_qza(taxonomy)$data %>%
-    separate(Taxon,
-             sep = ";",
-             c("Domain",
-               "Phylum",
-               "Class",
-               "Order",
-               "Family",
-               "Genus",
-               "Species"),
-             fill = "right",
-             extra = "drop") %>%
-    as.matrix() %>%
-    gsub(x = .,
-         pattern = "[A-Z]_[0-9]__",
-         replacement = "") %>% 
-    as.data.frame() %>%
-    map_df(~ gsub(
+p_taxTab =  qiime2R::read_qza(taxonomy)$data %>%
+  separate(Taxon,
+           sep = ";",
+           c("Domain",
+             "Phylum",
+             "Class",
+             "Order",
+             "Family",
+             "Genus",
+             "Species"),
+           fill = "right",
+           extra = "drop") %>%
+  as.matrix() %>%
+  gsub(x = .,
+       pattern = "[A-Z]_[0-9]__",
+       replacement = "") %>% 
+  as.data.frame() %>%
+  map_df(~ gsub(
     pattern = "metagenome|uncultured|unidentified|Unknown",
     replacement = NA,
     .x)) %>%
-    mutate_if(is_character, str_trim) %>%
-    column_to_rownames("Feature.ID") %>%
-    mutate(Domain = ifelse(is.na(Domain),
+  mutate_if(is_character, str_trim) %>%
+  column_to_rownames("Feature.ID") %>%
+  mutate(Domain = ifelse(is.na(Domain),
                          "U. Domain",
                          Domain),
          Phylum = coalesce(Phylum,
@@ -110,16 +138,17 @@ objectiPhy = function(metadata,
                             ifelse(grepl("^U.", Genus),
                                    Genus,
                                    paste("U.", Genus))))
-  
 
-  # ASVs counts ("qiime dada2 denoise-paired")
 
-  p_abuTab = read_qza(abundance)$data %>%
-    as.data.frame()
+# ASVs counts ("qiime dada2 denoise-paired")
 
-  # de-contamination and remove controls
+p_abuTab = qiime2R::read_qza(abundance)$data %>%
+  as.data.frame()
 
-  c_abuTab = p_abuTab[!isContaminant(t(p_abuTab),
+# de-contamination and remove controls DOI: 10.1186/s40168-018-0605-2 
+# filtering out chloroplast, mitochondria and non bacteria/archaea
+
+c_abuTab = p_abuTab[!decontam::isContaminant(t(p_abuTab),
                                    neg = c(colnames(p_abuTab)
                                            %in% control_samples) ,
                                    method = "prevalence",
@@ -127,298 +156,57 @@ objectiPhy = function(metadata,
                                    batch = metaTab$Run,
                                    normalize = T,
                                    detailed = F), ] %>%
-    filter(rownames(.) %in%
-             rownames(p_taxTab %>%
-                        filter(!Order %in% "Chloroplast" &
-                                 !Order %in% "Mitochondria" &
-                                 !Domain %in% "Unassigned"))) %>%
-    select(!all_of(control_samples))  %>%
-    filter(rowSums(.) > 0)
+  filter(rownames(.) %in%
+           rownames(p_taxTab %>%
+                      filter(!Order %in% "Chloroplast" &
+                               !Order %in% "Mitochondria" &
+                               !Domain %in% "Unassigned"))) %>%
+  select(!all_of(control_samples))  %>%
+  filter(rowSums(.) > 0)
 
-  # normalization by scaling 
+# normalization by scaling with ranked subsampling
+# DOI: 10.7717/peerj.9593
 
-  abuTab = SRS(c_abuTab,
-                 Cmin = min(colSums(c_abuTab))) %>%
-    `rownames<-`(rownames(c_abuTab))
+abuTab = SRS::SRS(c_abuTab,
+             Cmin = min(colSums(c_abuTab))) %>%
+  `rownames<-`(rownames(c_abuTab))
 
-  # filter taxonomy file
+# filter taxonomy file from ASVs removed by the cleaning
 
-  taxTab = p_taxTab %>%
-    filter(rownames(.) %in%
-             rownames(abuTab)) %>%
-    as.matrix()
+taxTab = p_taxTab %>%
+  filter(rownames(.) %in%
+           rownames(abuTab)) %>%
+  as.matrix()
 
-  # representative sequences
+# representative sequences
 
-  seqsTab = read_qza(ASVs)$data[rownames(abuTab)]
+seqsTab = qiime2R::read_qza(ASVs)$data[rownames(abuTab)]
 
-  # compute phylogenetic tree
+# compute phylogenetic tree
 
-  treeObj = phyDat(as(AlignSeqs(seqsTab,
-                                anchor = NA,
-                                verbose = F),
-                      "matrix"),
-                   type = "DNA") %>%
-    dist.ml(.) %>% 
-    NJ(.)
+treeObj = 
+  phangorn::phyDat(
+    as(
+      DECIPHER::AlignSeqs(seqsTab,
+                      anchor = NA,
+                      verbose = F),
+            "matrix"),
+         type = "DNA") %>%
+  phangorn::dist.ml(.) %>% 
+  phangorn::NJ(.)
 
-  # import into phyloseq-object
+# import into phyloseq-object
 
-  phytted =  phyloseq(otu_table(abuTab,
-                                taxa_are_rows = T),
-                      phyloseq::tax_table(taxTab),
-                      sample_data(metaTab),
-                      refseq(seqsTab),
-                      phy_tree(treeObj))
+phytted =  phyloseq(otu_table(abuTab,
+                              taxa_are_rows = T),
+                    phyloseq::tax_table(taxTab),
+                    sample_data(metaTab),
+                    refseq(seqsTab),
+                    phy_tree(treeObj))
 
-  return(phytted)
+# your metataxonomy at a glance
 
-}
-
-plotPhylogeneticTree = function(groupingVariable) {
-
-  ranks = rank_names(phytted) %>%
-    set_names()
-
-  ranks = ranks[!ranks %in% "Domain"]
-
-  phytted = phytted %>%
- prune_taxa(core_members(.,
-                         prevalence = 0.10),
-            .)
-
-  plotter = function(x) {
-
-    phytted %>%
-      tax_glom(ranks[[x]]) %>%
-      plot_tree(label.tips = ranks[[x]],
-                color = "Phylum",
-                plot.margin = 0.1,
-                shape = groupingVariable,
-                ladderize = T,
-                text.size = 3) +
-      labs(title = ranks[[x]]) +
-      theme(legend.key = element_blank(),
-            legend.position = "bottom",
-            text = element_text(family = font_an)) +
-      scale_color_nord("aurora")
-  }
-
-  map(ranks,
-      ~plotter(.x))
-}
-
-plotRelativeAbundance = function(groupingVariable,
-                                 secondVariable) {
-
-  ranks = rank_names(phytted) %>%
-    set_names()
-
-  ranks = ranks[!ranks %in% "Domain"]
-
-  plotter = function(x) {
-    plot_composition(
-  phytted %>%
-    aggregate_top_taxa(level = ranks[[x]],
-                   top = 19) %>%
-    microbiome::transform(transform = "compositional"),
-  otu.sort = "abundance",
-  plot.type = "barplot",
-  average_by = groupingVariable) +
-      labs(y = "Relative abundance",
-       x = groupingVariable) +
-      scale_fill_manual(name = paste("Top 20 ", ranks[[x]]),
-                       values = c(nord_palettes[["silver_mine"]],
-                                  nord_palettes[["aurora"]],
-                                  nord_palettes[["algoma_forest"]],
-                                  nord_palettes[["red_mountain"]])) +
-      facet_wrap(secondVariable,
-                 scales = "free")
-  }
-
-  map(ranks,
-      ~plotter(.x))
-}
-
-plotAlpha = function(groupingVariable,
-                     referenceLevel) {
-
-  alpha_frame = 
-    phytted %>%
-    microbiome::alpha() %>%
-    merge(meta(phytted),
-          by = 0)
-
-  colnames(alpha_frame) = gsub("_",
-                               " ",
-                               colnames(alpha_frame))
-
-  plotter = function(y, x) {
-    ggplot(alpha_frame,
-           aes(x = .data[[x]],
-               y = .data[[y]],
-               fill = .data[[x]],
-               title = .data[[y]])) +
-      geom_boxplot(outlier.shape = NA) +
-      scale_fill_manual(values = pal_type) +
-      stat_compare_means(ref.group = referenceLevel,
-                         label = "p.signif",
-                         hide.ns = T,
-                         method.args = list(p.adjust.methods = "holm"),
-                         method = "t.test",
-                         size = 15,
-                         family = "Fira Sans"
-                        ) +
-      theme(legend.position = "none",
-            axis.title.x = element_blank(),
-            axis.title.y = element_blank()) +
-      facet_grid(~site)
-  }
-
-  map(alpha_frame %>%
-        select_if(is.numeric) %>%
-        names() %>%
-        set_names(),
-      ~plotter(.x,
-               groupingVariable))
-
-}
-
-plotBetaDiversity = function(groupingVariable,
-                             groupingVariable2) {
-  
-  grid = expand_grid(method = c("CCA",
-                                "PCoA",
-                                "NMDS"),
-                     distance = c("bray",
-                                  "unifrac",
-                                  "(A+B-2*J)/(A+B-J)"))
-
-  beta_frame = pmap(
-    grid,
-    ~ordinate(phytted,
-              method = .x,
-              distance = .y))
-
-  grid = grid %>%
-    mutate(fullName = rep(c("Bray-Curtis",
-                            "Unifrac",
-                            "Jaccard"),
-                          3))
-
-  names(beta_frame) = c(paste(grid$method,
-                              "over",
-                              grid$fullName))
-
-  plotter = function(x) {
-    plot_ordination(
-      phytted,
-      ordination = beta_frame[[x]],
-      color = groupingVariable,
-      shape = groupingVariable2,
-      title = x) +
-      geom_point(size = 4) +
-      scale_color_manual(values =
-                           palette_list[[groupingVariable]])
-  }
-
-  ranks = names(beta_frame) %>%
-    set_names()
-
-  map(ranks,
-      ~plotter(.x))
-}
-
-attributeSignificance = function(x){
-  ifelse(x > 0.05, "ns",
-         ifelse(x <= 0.05 & x > 0.01, "*",
-                 ifelse(x <= 0.01 & x > 0.001, "**",
-                        ifelse(x <= 0.001 & x > 0.0001, "***", "****"))))
-}
-
-plotDESeq2 = function(deseqqed) {
-  deseqqed = deseqqed %>%
-    DESeq(fitType = "mean")
-
-  contrasts_names = resultsNames(deseqqed) %>%
-    set_names()
-
-  extractResults = function(.x) {
-    results(deseqqed,
-            format = "DataFrame",
-            alpha = 0.05,
-            pAdjustMethod = "fdr",
-            name = .x) %>%
-      merge(phytted@tax_table,
-            by = 0) %>%
-      filter(!is.na(padj) &
-               !padj > 0.05) %>%
-      arrange(desc(log2FoldChange),
-              padj) %>%
-      mutate(Significance = attributeSignificance(padj)) %>%
-      tibble()
-  }
-
-  res.deseq = map(contrasts_names,
-                  ~extractResults(.x))
-
-  plotter = function(x) {
-    ggplot(res.deseq[[x]],
-           aes(
-             x = log2(baseMean),
-             y = log2FoldChange,
-             fill = Significance)) +
-      geom_point(alpha = 0.75,
-                 shape = 22,
-                 color = "black",
-                 size = 5) +
-      scale_size(range = c(24, .1),
-                 name = "FDR-adjusted p-value") +
-      scale_fill_manual(
-        values = c("#264653","#2a9d8f","#e9c46a","#f4a261","#e76f51")) +
-      geom_label(data = res.deseq[[x]] %>%
-                   filter(padj < 0.0001),
-                 aes(label = Genus),
-                 hjust = 0,
-                 vjust = 1,
-                 show.legend = F,
-                 label.r = unit(0, "lines"),
-                 label.padding = unit(0.1, "lines"),
-                 fill = NA,
-                 color = "black",
-                 size = 3,
-                 family = "Arial Narrow") +
-      labs(title = gsub("_", " ", x))
-  }
-
-  map(contrasts_names,
-      ~plotter(.x))
-}
-
-
-```
-
-# PRE-PROCESS (1st time only)
-
-This section let you select the path for your QIIME2 artifacts. You also need to identify your negative controls for the de-contamination step. This section import the qza and mapping. The ASVs abundance table is normalized and cleaned of contamination, non-bacterial ASVs and assignment below 97 % of confidence are removed and a phyloseq-class object is generated to store all the data. You can now save your object and/or play around with shiny-phyloseq to get a first overlook.
-
-```{r, echo = FALSE, include = FALSE}
-
-# set path to QIIME2 artifacts and the sample IDs of controls (extraction, PCR ... )
-
-phytted = objectiPhy(metadata = "halden_mapping_run_no.txt",
-                     taxonomy = "taxonomy-dada2_240200e4.qza",
-                     abundance = "table_all.qza",
-                     ASVs = "rep-seqs_all.qza",
-                     control_samples = c("Juliette14",
-                                         "Juliette20",
-                                         "Juliette21",
-                                         "Juliette24",
-                                         "Juliette25",
-                                         "Juliette27",
-                                         "Juliette28",
-                                         "Juliette29",
-                                         "Juliette30"))
+summarize_phyloseq(phytted)
 
 # save phyloseq-obj as .RData to avoid repeating the lengthy computation steps
 
@@ -428,25 +216,33 @@ save(phytted,
                   ".RData",
                   sep = ""))
 
-# your results at a glance
-
-summarize_phyloseq(phytted)
-
 ```
 
-# INPUT (After 1st time)
 
-Congratulations, now that you have your phyloseq object prepared, you can finally start to explore the microbial wonderland in your samples
+# LOAD
+
+Direct loading of the object after pre-processing is done
 
 ```{r, echo = FALSE, include = FALSE}
 
 # load your phytted dataset
 
-load("")
+load("phytted2022-11-23 19:35:39.RData")
 
-# again, take a good look at your results. Look at the sparsity and the percentage of singletons
+# again, take a good look at your results. Look at the sparsity and the percentage of singletons and filter if necessary
 
 summarize_phyloseq(phytted)
+
+# we filter anything belove 0.1 prevalence (10% samples)
+
+phytted =
+  phytted %>% 
+  prune_taxa(prevalence(., detection  = 0) >= 0.1, .)
+
+summarize_phyloseq(phytted)
+
+# relevel
+
 sample_data(phytted)$type = factor(c(
   rep("biocrust", 3), rep("initial", 2), "biocrust", "initial", "biocrust", rep("initial", 3), rep("heap", 5), "biocrust"),
   levels = c("heap", "initial", "biocrust"))
@@ -456,11 +252,10 @@ sample_data(phytted)$type = factor(c(
 table(meta(phytted)$site,
       meta(phytted)$type)
 
+# color palette
+
 pal_type = c("#5CC8DF", "#FFCF04", "#008A61")
 
-phytted =
-  phytted %>% 
-  prune_taxa(prevalence(., detection  = 0) >= 0.1, .)
 
 ```
 
@@ -470,9 +265,13 @@ phytted =
 
 ```{r}
 
+# select only top 10% taxa 
+
 melted = phytted %>%
- metagMisc::phyloseq_filter_top_taxa(perc = 10) %>% 
-  psmelt()
+  metagMisc::phyloseq_filter_top_taxa(perc = 10) %>% 
+  speedyseq::psmelt()
+
+# plot relative abundance of most abundant phyla
 
 plot_3 =
   ggplot(melted) +
@@ -501,19 +300,75 @@ dev.off()
 
 ```{r}
 
-alphaDiversity = plotAlpha("type",
-                           "initial")
+# compute alpha diversity metric indexes
 
-# multiplot
+alpha_frame = 
+  phytted %>%
+  microbiome::alpha(
+    index = c("chao1",
+              "evenness_pielou", 
+              "diversity_shannon",
+              "dominance_simpson")) %>%
+  merge(meta(phytted),
+        by = 0) %>% 
+  `colnames<-`(gsub("_",
+                    " ",
+                    colnames(.))) %>% 
+  pivot_longer(cols = 2:5)
 
-a = list(alphaDiversity[["chao1"]],
-       alphaDiversity[["evenness pielou"]],
-  alphaDiversity[["diversity shannon"]],
-     alphaDiversity[["dominance simpson"]])
+# write down test results
+
+ggpubr::compare_means(
+  formula = value ~ type,
+  method = "wilcox.test",
+  data = alpha_frame,
+  group.by = c("name"),
+  p.adjust.method = "fdr") %>% write_csv("compare_type.csv")
+
+ggpubr::compare_means(
+  formula = value ~ type,
+  method = "wilcox.test",
+  data = alpha_frame,
+  group.by = c("name", "site"),
+  p.adjust.method = "fdr") %>% write_csv("compare_type_site.csv")
+
+# boxplots
+
+ggplot(alpha_frame %>% 
+         filter(
+           name %in%
+             c("chao1",
+               "evenness pielou", 
+               "diversity shannon",
+               "dominance simpson")),
+       aes(x = type,
+           y = value,
+           fill = type,
+           title = type)) +
+  geom_jitter(aes(shape = site), size = 7.5) +
+  scale_shape_manual(values = c(21, 23)) +
+  geom_boxplot(outlier.shape = NA, alpha = .1, color = "#757575") +
+  scale_fill_manual(values = pal_type) +
+  ggpubr::stat_compare_means(
+    aes(label = after_stat(p.adj)),
+    ref.group = "heap",
+    hide.ns = T,
+    method.args = list(p.adjust.methods = "fdr"),
+    method = "wilcox.test",
+    size = 10,
+    vjust = 1,
+    family = "Fira Sans"
+  ) +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  facet_wrap(
+    ~ name,
+    scales = "free", ncol = 2) -> a
 
 # save all in a pdf
 
-cairo_pdf("OUT/alphaDiversity.pdf",
+cairo_pdf("OUT/alphaDiversity_united.pdf",
     width = 16,
     height = 16,
     onefile = T)
@@ -537,6 +392,8 @@ sampling_environment =
 sampling_environment$type = factor(c("biocrust", "biocrust", "biocrust", "initial", "initial", "initial", "heap", "heap", "biocrust", "biocrust", "biocrust", "initial", "initial", "initial", "heap", "heap", "heap"),
                                    levels = c("heap", "initial", "biocrust"))
 
+# scale chosen env variables
+
 sampling_environment2 =
   sampling_environment %>% 
   select(6:10) %>% 
@@ -547,6 +404,8 @@ count_table =
   abundances(phytted, 
              "compositional") %>% 
   as.data.frame()
+
+# either all together or subsets
 
 Y = 
   sampling_environment2 %>%
@@ -732,12 +591,29 @@ dev.off()
 
 ```{r}
 
-## remove zero and near-zero variance variables
+## make unique names for the genera. Will come handy for the plotting
+
+new_tax_table = 
+  phytted@tax_table@.Data %>% 
+  as.data.frame() %>% 
+  mutate(Genus = vctrs::vec_as_names(Genus, repair = "unique") %>% 
+           sub("...", "_", fixed = T, .))
+
+phytted_id = 
+  phyloseq(
+    otu_table(phytted@otu_table, taxa_are_rows = T),
+    sample_data(phytted@sam_data),
+    tax_table(new_tax_table %>% 
+                as.matrix),
+    phy_tree(phytted@phy_tree))
+
+saveRDS(phytted_id, "phytted_id.RDS")
 
 count_table =
   abundances(phytted) %>% 
   as.data.frame()
 
+# PCoA using unifrac distance
 
 set.seed(1)
 res_pcoa =
@@ -748,6 +624,8 @@ res_pcoa =
 
 covar = as.factor(paste(meta(phytted)$site, meta(phytted)$type))
 
+# we first select a subset of taxa using a univariate filter
+
 set.seed(1)
 
 kruskal_filter = 
@@ -755,6 +633,8 @@ kruskal_filter =
           ~ kruskal.test(.x ~ covar, data = count_table)$p.value) %>% 
   p.adjust("BH")
 
+
+# then we deploy a random forest classification to extract the variable importance
 
 p_load(caret)
 seedlings = vector(mode = "list", length = 18)
@@ -771,6 +651,8 @@ res_rf =
     trControl = trainControl(method = "cv",
                              number = 999, 
                              seeds=  seedlings))
+
+# we extract all the results for the plots
 
 varImp_rf =
   varImp(res_rf) %>%
@@ -794,6 +676,7 @@ species =
   mutate(qval_KW = kruskal_filter,
          zscore = (Overall - mean(Overall))/sd(Overall))
 
+# the first plot is an ordination
 
 a = ggplot(species,
        aes(x = Axis.1,
@@ -825,6 +708,15 @@ a = ggplot(species,
        y = paste("Axis.2:", round(res_pcoa$values[2, 2], 2)))
 
 
+# setting the order of the labels right
+
+Genus_order = paste(tax_tibble(phytted) %>% 
+                      arrange(Phylum) %>% pull(Genus),
+                    tax_tibble(phytted) %>% 
+                      arrange(Phylum) %>% pull(FeatureID))
+
+# extract the relative abundances for the ASVs
+
 da_abundances =
   species %>% 
   filter(zscore >= 5) %>% 
@@ -834,9 +726,11 @@ da_abundances =
               group_by(site, type, OTU) %>% 
               summarise(relAbu = mean(Abundance)) %>% 
               rename(ASVs = OTU)) %>%
-  mutate(Phylum = factor(Phylum, levels = c(sort(unique(Phylum), decreasing = T))),
-         Genus_2 = paste(Genus, ASVs)) %>% arrange(Phylum)
-  
+  arrange(Phylum) %>% 
+  mutate(Genus_2 = paste(Genus, ASVs) %>% factor(levels = Genus_order, 
+                                                 ordered = T))
+
+
 write_tsv(da_abundances %>% 
   pivot_wider(
     values_from = relAbu,
@@ -845,53 +739,55 @@ write_tsv(da_abundances %>%
   "OUT/DA_rab.tsv"
 )
 
-b = ggplot(da_abundances,
+# heatmap
+
+b = 
+  ggplot(da_abundances,
            aes(y = Genus_2 %>% gsub(".{31}$", "", .),
                x = site)) +
   geom_point(
-    aes(size = log2(relAbu + 0.01),
+    aes(size = relAbu,
         color = type),
     alpha = 2/3,
-    show.legend = F) +
-  scale_color_manual(values = pal_type,
-                     aesthetics = c("fill", "color")) +
+    show.legend = T) +
+  scale_color_manual(values = pal_type) +
   scale_size(range = c(0, 20)) +
-  facet_grid(rows = vars(Phylum),
-             cols = vars(type), scales = "free", space = "free") +
-  theme(strip.text = element_blank(),
-        axis.title.y = element_blank())
+  facet_grid(cols = vars(type),
+             rows = vars(Phylum),
+             scales = "free",
+             space = "free") +
+  theme(legend.position = "none",
+        strip.text = element_blank(),
+        axis.title.y = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing.y = unit(0.5, "lines"),
+        panel.spacing.x = unit(0, "lines")) 
 
-c = 
+
+c =
   ggplot(da_abundances,
          aes(y = Genus_2 %>% gsub(".{31}$", "", .),
              x = 1)) +
   geom_tile(aes(fill = Phylum),
             width = 0.5) +
-  scale_fill_iwanthue(
-    hmin = 0,
-    hmax = 360,
-    cmin = 30,
-    cmax = 35,
-    lmin = 60,
-    lmax = 100) +
-  theme_void() + 
+  hrbrthemes::scale_fill_ipsum() +
+  theme_void() +
   facet_grid(rows = vars(Phylum), scales = "free", space = "free") +
-  theme(legend.position = "bottom",
+  theme(legend.position = "right",
         legend.box = "horizontal",
         legend.text = element_text(family = "Fira Sans", size = 30),
         legend.title = element_blank(),
         strip.text = element_blank(),
-        panel.spacing = unit(0.1, "lines")) +
-  guides(fill = guide_legend(nrow = 3))
+        panel.spacing.y = unit(0.5, "lines")) +
+  guides(fill = guide_legend(ncol = 1))
 
 bc = b + c +
-  plot_layout(widths = c(4, 1), 
-              guides = "collect")
+  plot_layout(widths = c(4, 1))
 
 
-cairo_pdf("OUT/pcoa_rf.pdf",
-          width = 16,
-          height = 20,
+cairo_pdf("OUT/pcoa_rf_feb.pdf",
+          width = 24,
+          height = 24,
           onefile = T)
 list(a, bc)
 dev.off()
@@ -903,77 +799,53 @@ dev.off()
 
 ```{r}
 
+# phylogenetic tree of the cyanobacteria in the metataxonomy
 
 cyano = 
   subset_taxa(phytted, Phylum == "Cyanobacteria") %>% 
   transform("compositional") %>% 
-  prune_taxa(taxa_sums(.) > 0, .)
+  prune_taxa(taxa_sums(.) > 0, .) %>% 
+  speedyseq::tree_glom(resolution = .03) %>% 
+  metagMisc::phyloseq_add_max_tax_rank()
 
-# assign taxonomy (download reference database here)
-
-set.seed(3)
-cyanoNewAssignment =
-  dada2::assignTaxonomy(
-    cyano@refseq,
-    refFasta = "cydrasil-v3-sequence-list.fasta.gz",
-    minBoot = 0,
-    tryRC = F,
-    taxLevels = c("ID", "Genus", "Species", "Strain"),
-    multithread = T,
-    verbose = T
-    ) %>% 
-  as.data.frame() %>% 
-  `rownames<-`(rownames(otu_table(cyano)))
-
-cyano_with_seq = 
-  cyanoNewAssignment %>% 
-  rownames_to_column("ASV") %>% 
-  left_join(readDNAStringSet("cydrasil-v3-sequence-list.fasta") %>% 
-  as.data.frame() %>% 
-  `colnames<-`("seq") %>% 
-  rownames_to_column() %>% 
-  separate(rowname, c("ID", "Genus", "Species", "Strain"), sep = ";"))
-
-seqinr::write.fasta(cyano_with_seq$seq %>% as.list(), names = cyano_with_seq$ASV, as.string = T, file.out = "new_assigment.fasta")
-
-cyano_seq = readDNAStringSet("new_assigment.fasta")
-
-cyano = 
-  phyloseq(otu_table(cyano@otu_table,
-                     taxa_are_rows = T),
-           phyloseq::tax_table(cyanoNewAssignment %>% as.matrix()),
-           sample_data(cyano@sam_data),
-           refseq(cyano_seq),
-           phy_tree(phyDat(as(AlignSeqs(cyano_seq,
-                                anchor = NA,
-                                verbose = F),
-                      "matrix"),
-                   type = "DNA") %>%
-    dist.ml(.) %>% 
-    NJ(.)))
-
-
+cyano@tax_table$Genus =
+  coalesce(tax_table(cyano)$Genus, 
+           paste(tax_table(cyano) %>% select(Rank), 
+                 tax_table(cyano)$LowestTaxon,
+                 sep = "_"))
 
 p_load(ggtree)
 
-treplot = ggtree(cyano,
-       layout = "circular",
-       size = .5) +
-  geom_rootedge(0.1, size = 0.5) +
-  geom_tiplab(aes(x = x + 0.03,
-                    label = Genus),
-              size = 6) +
-  geom_tippoint(aes(x = x  + 0.01,
-    color = type,
-    shape = site),
-    na.rm = T,
-    alpha = 3/4,
-    position = position_dodge(width = 0.025),
-    size = 4) +
-  scale_color_manual(values = pal_type) +
-  scale_shape_manual(values = c(15, 19))
 
-cairo_pdf("OUT/cyano_tree_cyd_2010.pdf",
+p = ggtree(cyano)
+
+nodes = 
+  p$data %>% 
+  select(parent, Genus) %>% 
+  na.omit() %>% 
+  distinct()
+
+treplot = 
+  ggtree(cyano,
+         layout = "rectangular",
+         size = .5) + 
+  geom_tiplab(aes(label = coalesce(Genus, paste(RankName, LowestTaxon, sep = "_"))),
+              size = 5,
+              linetype = 3,
+              align = T,
+              offset = .02) +
+  geom_tippoint(
+    aes(color = type,
+        shape = site,
+        size = Abundance),
+    position = position_dodge(width = 0.02),
+    alpha = .9) +
+  scale_color_manual(values = pal_type) +
+  scale_shape_manual(values = c(15, 19)) +
+  scale_size(range = c(3, 6)) +
+  xlim(0, 0.55)
+
+cairo_pdf("OUT/cyano_tree_silva_OTU.pdf",
           width = 20, height = 20)
 treplot
 dev.off()

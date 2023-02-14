@@ -1,0 +1,3108 @@
+---
+title: "Microbiome convergence and deterministic community assembly along successional biocrust gradients on potash salt heaps"
+author: "Juliette Ohan"
+date: "7/28/2022"
+output:
+  word_document: default
+  html_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+This is an R document to analyze the chemical values and biological
+sequences from Biocrusts on Salt Heaps in Germany aka the "Halden."
+
+Measurements: Abiotics - EC, Chl a, pH, DOC, TDN (site + stage + type,
+3x rep) output:
+
+Biotics - DNA sequencing of 16S rRNA gene (only site + stage, 3x rep)
+output: ASV table with taxonomy
+
+qPCR of 16S rRNA bacterial and archaeal genes (site + stage) output:
+
+Co-variates: 2 sites = OD, WT 3 stages = heap, initial, biocrust (3x
+replicates) 2 soil types (paired) = bulk, gradient
+
+?? help with R:
+[karl.emmert-fees\@helmholtz-muenchen.de](mailto:karl.emmert-fees@helmholtz-muenchen.de){.email}
+
+ALPHA DIVERSITY, RICHNESS, EVENNESS, RAREFY - edited Sept/5/22
+
+```{r}
+#install.packages("tidyverse")
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+
+#getwd()
+#setwd
+
+#import data from present working directory, if it is a file on your work computer.. THIS IS ALREADY SCALED TO 14347 READS
+
+#Get ASV file
+asv.data <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/abundance_with_archea.csv", 
+            header = TRUE, 
+           sep = ",",
+           dec = ".")
+
+#remove singletons!!!! This might affect a lot ~~~ +++ ~~~ +++ ~~~
+
+#change first column to row names
+asv.data <- data.frame(asv.data, row.names =1)
+
+
+#get mapping file
+salt_map <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/all/salt_map.csv", 
+            header = TRUE, 
+           sep = ",",
+           dec = ".")
+
+#reorder levels
+salt_map$type <- factor(salt_map$type, levels = c("heap","initial", "biocrust"))
+salt_map$label <- factor(salt_map$label, levels = c ("OD_heap", "OD_initial", "OD_biocrust",
+                                                     "WT_heap", "WT_initial", "WT_biocrust"))
+#subset by type
+salt_map_OD <- subset(salt_map, site == "OD", select = c("NAME", "label", "Sample_num", "seqID", "site", "type"))
+
+salt_map_WT <- subset(salt_map, site == "WT", select = c("NAME", "label","Sample_num", "seqID", "site", "type"))
+
+#match and replace seqID with Names
+asv.data2 <- asv.data %>%
+      rename_at(as.vector(na.omit(salt_map$seqID[match(names(asv.data), salt_map$seqID)])), 
+               ~as.vector(na.omit(salt_map$NAME[match(names(asv.data), salt_map$seqID)])))
+
+#------------------------------------------------------------------------------------------------------
+#diversity indices using vegan
+#https://peat-clark.github.io/BIO381/veganTutorial.html
+#https://grunwaldlab.github.io/analysis_of_microbiome_community_data_in_r/07--diversity_stats.html
+
+ library("vegan")
+ #?vegan
+
+#I need to transpose the dataset for OTU/species as columns and samples as rows
+
+asv.data.t2 <- t(asv.data2)
+
+#reorder sites
+asv.data.t2 <- asv.data.t2[order(factor(row.names(asv.data.t2), levels=c(
+              "OD_heap_1", "OD_heap_2", "OD_heap_3",
+               "OD_initial_1", "OD_initial_2", "OD_initial_3",
+               "OD_biocrust_1", "OD_biocrust_2", "OD_biocrust_3",
+                "WT_heap_2", "WT_heap_3",
+               "WT_initial_1", "WT_initial_2", "WT_initial_3",
+               "WT_biocrust_1", "WT_biocrust_2", "WT_biocrust_3"))),]
+
+
+
+#get the different alpha diversity metrics
+simpson <- diversity(asv.data.t2, index = "simpson")
+invsimp <- diversity(asv.data.t2, "inv")
+shannon <- diversity(asv.data.t2, index = "shannon")
+
+## Fisher alpha
+alpha <- fisher.alpha(asv.data.t2)
+
+# ## Species richness (S) and Pielou's evenness (J): THIS IS AFTER SCALING!
+ S <- specnumber(asv.data.t2) ## rowSums(BCI > 0) does the same...
+ even <- shannon/log(S)
+ even
+ 
+
+ # #compare simpson and shannon
+ #par(mfrow = c(1, 2))  # use par to generate panels with 1 row of 2 graphs
+ hist(simpson)
+ hist(shannon)
+
+ #par(mfrow = c(1, 2))
+ bray = vegdist(asv.data.t2, "bray")
+ gower = vegdist(asv.data.t2, "gower")
+ hist(bray, xlim = range(0.0,1.0))
+ hist(gower, xlim = range(0.0,1.0))
+
+#rarefy
+spAbund <- rowSums(asv.data.t2)  #gives the number of individuals found in each plot
+spAbund # view observations per plot
+
+#rarefaction curve
+#rare <- rarecurve(asv.data.t2, col = "blue")
+
+# Plot all (NOT SURE HOW TO INTERPRET THIS)
+#pairs(cbind(shannon, simpson, invsimp, alpha), pch="+", col="blue")
+
+
+#remove sample from mapping file to allow for boxplots
+salt_map2 <- salt_map[!(salt_map$NAME=="WT_heap_1"),]
+
+
+#Plot values 
+ggplot(salt_map2, aes(x = label, y = alpha, fill = type)) +
+  geom_boxplot()+
+  #ADD TITLE
+  ggtitle("Fisher (Alpha Diversity)")  + 
+  #ASSIGN COLORS
+  scale_fill_manual(values = c("heap" = "#5cc6de",
+                               "initial" = "#ffcd0c",
+                               "biocrust" = "#048861")) +
+  #REMOVE AXIS LABELS
+  theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  )
+
+
+ggplot(salt_map2, aes(x = label, y = simpson, fill = type)) + #this seems correct
+  geom_boxplot() +
+  ggtitle("Simpson (Dominance)") + 
+  scale_fill_manual(values = c("heap" = "#5cc6de",
+                               "initial" = "#ffcd0c",
+                               "biocrust" = "#048861")) +
+  theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  )
+
+
+ggplot(salt_map2, aes(x = label, y = shannon, fill = type)) +
+  geom_boxplot()+
+  ggtitle("Shannon (Diversity)")  + 
+    scale_fill_manual(values = c("heap" = "#5cc6de",
+                               "initial" = "#ffcd0c",
+                               "biocrust" = "#048861")) +
+  theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  )
+
+
+ggplot(salt_map2, aes(x = label, y = even, fill = type)) +
+  geom_boxplot()+
+  ggtitle("Pielou (Evenness)")  + 
+    scale_fill_manual(values = c("heap" = "#5cc6de",
+                               "initial" = "#ffcd0c",
+                               "biocrust" = "#048861")) +
+  theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  )
+
+
+ggplot(salt_map2, aes(x = label, y = S, fill = type)) +
+  geom_boxplot()+
+  ggtitle(" Species Richness (S)")  + 
+    scale_fill_manual(values = c("heap" = "#5cc6de",
+                               "initial" = "#ffcd0c",
+                               "biocrust" = "#048861")) +
+  theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  )
+
+#SOMETHING IS WRONG HERE?, THERE SHOULD NOT BE A HEAP SAMPLE WITH HIGH DIVERSITY...MAYBE I MISLABELLED A SAMPLE...rob did this analysis for me anyway and it came out ok, here the numbers in simpson seem OK also
+
+```
+
+PREP DATA - edited Apr/5/22
+
+```{r}
+#merge biological replicates and remove asvs that are not present in all replicates, so you only have six treatments
+
+#make separate df for each treatment 
+OD_crust <- asv.data[, c("Juliette11", "Juliette12", "Juliette13")]
+OD_inter <- asv.data[, c("Juliette22", "Juliette15", "Juliette16")]
+OD_heap <- asv.data[, c("Juliette17", "Juliette18", "Juliette19")]
+WT_crust <- asv.data[, c("Juliette1", "Juliette2", "Juliette3")]
+WT_inter <- asv.data[, c("Juliette4", "Juliette5", "Juliette6")]
+WT_heap <- asv.data[, c("Juliette10", "Juliette8")]
+
+#removing all rows with ALL zeros 
+#(See https://stackoverflow.com/questions/18055788/how-to-remove-rows-with-0-values-using-r)
+WT_crust <- WT_crust[apply(WT_crust[,-1], 1, function(x) !all(x==0)),]
+WT_inter <- WT_inter[apply(WT_inter[,-1], 1, function(x) !all(x==0)),]
+OD_crust <- OD_crust[apply(OD_crust[,-1], 1, function(x) !all(x==0)),]
+OD_inter <- OD_inter[apply(OD_inter[,-1], 1, function(x) !all(x==0)),]
+OD_heap  <- OD_heap [apply(OD_heap [,-1], 1, function(x) !all(x==0)),]
+
+#different function for WT_heap since it only has two replicates
+WT_heap <- WT_heap[rowSums(WT_heap[])>0,]
+# 
+# #write the asvs to text files, this output in downloads folder (on mac)
+# write.table(WT_crust[0], file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/WT_crust.txt", quote = FALSE, row.names = TRUE, col.names = FALSE,)
+# 
+# write.table(WT_heap[0], file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/WT_heap.txt", quote = FALSE, row.names = TRUE, col.names = FALSE,)
+# 
+# write.table(WT_inter[0], file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/WT_inter.txt", quote = FALSE, row.names = TRUE, col.names = FALSE,)
+# 
+# write.table(OD_crust[0], file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/OD_crust.txt", quote = FALSE, row.names = TRUE, col.names = FALSE,)
+# 
+# write.table(OD_inter[0], file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/OD_inter.txt", quote = FALSE, row.names = TRUE, col.names = FALSE,)
+# 
+# write.table(OD_heap[0], file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/OD_heap.txt", quote = FALSE, row.names = TRUE, col.names = FALSE,)
+```
+
+AMPVIS2 HEATMAP - edited May/3/22
+
+```{r dev = c("png", "jpg", "pdf")}
+#install.packages("ampvis2")
+library(ampvis2)
+
+#some colors for the heatmaps
+library(scales)
+library(viridis)
+#show_col(viridis(10))
+
+#load in tables 
+data <- amp_load(
+  otutable = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/abundance_with_archea_ampvis.csv ",
+  metadata = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/all/OUT_300721/halden_mapping_ampvis.txt",
+  taxonomy = NULL,
+  fasta = NULL,
+  tree = NULL,
+  pruneSingletons = TRUE
+)
+
+#reorder
+data$metadata$type <- factor(data$metadata$type, levels = c("Heap","Initial", "Biocrust"))
+
+#remotes::install_github("kasperskytte/ggnet")
+#install.packages('sna') 
+
+#make a heatmap (http://albertsenlab.org/ampvis2-heatmap/)
+#Domain, Phylum, Class, Order, Family, Genus, Species
+
+order_by_y_vec = paste(data$tax$Phylum, data$tax$Family, sep = "; ")
+
+amp_heatmap(
+  data = data,
+  tax_aggregate = "Family",
+  tax_add = "Phylum",
+  tax_show = 50,
+  showRemainingTaxa = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  order_y_by = rev(sort(unique(order_by_y_vec))), #call previous variable made 
+
+)
+
+
+
+amp_heatmap(
+  data = data,
+  tax_aggregate = "Phylum",
+ # tax_add = "Phylum",
+  tax_show = 20,
+  showRemainingTaxa = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  #color_vector = c( "whitesmoke", "royalblue4")
+  #color_vector = c( "#440154FF", "#481567FF", "#482677FF", "#453781FF","#404788FF","#39568CFF","#33638DFF","#2D708EFF","#287D8EFF","#238A8DFF","#1F968BFF","#20A387FF","#29AF7FFF","#3CBB75FF", "#55C667FF", "#73D055FF", "#95D840FF", "#B8DE29FF", "#DCE319FF", "#FDE725FF")
+)
+
+
+order_by_y_vec = paste(data$tax$Phylum, data$tax$Genus, sep = "; ")
+
+
+ #Genus <- 
+   
+  amp_heatmap(
+  data = data,
+  tax_aggregate = "Genus",
+  tax_add = "Phylum",
+  tax_show = 40,
+  showRemainingTaxa = TRUE,
+  tax_class = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  order_y_by = rev(unique(order_by_y_vec)), #call previous variable made 
+  plot_colorscale = "sqrt",
+  #color_vector = c("royalblue4", "whitesmoke", "darkred")
+)
+
+#make charactervector x to order y axis - cannot have extra appended tax_add if you want to manually reorder
+
+# x <- c("Phormidesmiales", "Nostocales","Thermomicrobiales", "Cytophagales", "Balneolales")
+
+ order_by_y_vec = paste(data$tax$Phylum, data$tax$Order, sep = "; ")
+
+ #this didnt work here..  
+ 
+amp_heatmap(
+  data = data,
+  tax_aggregate = "Order",
+  tax_add = "Phylum",
+  tax_show = 30,
+  showRemainingTaxa = TRUE,
+  #order_y_by = x,
+  order_y_by = rev(unique(order_by_y_vec)), #call previous variable made 
+  tax_class = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt"
+)
+
+ order_by_y_vec = paste(data$tax$Phylum, data$tax$Class, sep = "; ")
+ sort(order_by_y_vec)
+
+
+ amp_heatmap(
+  data = data,
+  tax_aggregate = "Class",
+  tax_add = "Phylum",
+  tax_show = 25,
+  showRemainingTaxa = TRUE,
+  order_y_by = rev(sort(unique(order_by_y_vec))), #call previous variable made 
+  tax_class = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt"
+)
+
+ 
+ 
+#subset Cyanobacteria from existing SILVA assigned taxonomy------------------------------------------
+ library(ampvis2)
+ data
+ #sample_variables(data)
+ cyano <- amp_subset_taxa(data, tax_vector = "Cyanobacteria", normalise = FALSE, remove = FALSE )
+ cyano
+ 
+ cyano$metadata$type <- factor(cyano$metadata$type, levels = c("Heap","Initial", "Biocrust"))
+
+  order_by_y_vec = paste(cyano$tax$Class, cyano$tax$Genus, sep = "; ")
+ sort(order_by_y_vec)
+
+     amp_heatmap(
+      data = cyano,
+      tax_aggregate = "Genus",
+      tax_add = "Class",
+      tax_show = 60,
+      showRemainingTaxa = TRUE,
+      order_y_by = rev(sort(unique(order_by_y_vec))), #call previous variable made 
+      tax_class = TRUE,
+      plot_values = FALSE, #this shows the numerical value of reads
+      group_by = "site",
+      facet_by = "type",
+      #(logical) Transform the OTU read counts to be in percent per sample. (default: TRUE)
+      normalise = FALSE, 
+      plot_colorscale = "sqrt"
+    )
+ 
+ 
+#load in Cyanobacteria from Cydrasil assigned taxonomy------------------------------------------
+
+ #load in tables 
+cyano_cyd <- amp_load(
+  otutable = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/amp_vis/cyano_cydrasil_otu.csv",
+  metadata = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/all/OUT_300721/halden_mapping_ampvis.txt",
+  taxonomy = NULL,
+  fasta = NULL,
+  tree = NULL,
+  pruneSingletons = FALSE
+ )
+
+#reorder
+cyano_cyd$metadata$type <- factor(cyano_cyd$metadata$type, levels = c("Heap","Initial", "Biocrust"))
+ 
+  #sample_variables(cyano_cyd)
+ cyano_cyd <- amp_subset_taxa(cyano_cyd, tax_vector = "Cyanobacteria", normalise = FALSE, remove = FALSE )
+ cyano_cyd
+ 
+ order_by_y_vec = paste(cyano_cyd$tax$Genus, cyano_cyd$tax$Species, sep = "; ")
+ sort(order_by_y_vec)
+ 
+cyano_cyd_plot <- 
+  amp_heatmap(
+  data = cyano_cyd,
+  tax_aggregate = "Species",
+  tax_add = "Genus",
+  tax_show = 40,
+  showRemainingTaxa = TRUE,
+  order_y_by = rev(sort(unique(order_by_y_vec))), #call previous variable made 
+  tax_class = TRUE,
+  plot_values = FALSE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  normalise = FALSE
+)
+
+ cyano_cyd_plot + 
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 15)) +
+  theme(axis.text.x = element_text(size = 20)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 15)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 15)) +
+  #change facet title size
+  theme(strip.text = element_text(size = 20))
+         
+ 
+
+ order_by_y_vec = paste(cyano_cyd$tax$Family, cyano_cyd$tax$Genus, sep = "; ")
+ sort(order_by_y_vec)
+
+ amp_heatmap(
+  data = cyano_cyd,
+  tax_aggregate = "Genus",
+  tax_add = "Family",
+  tax_show = 40,
+  showRemainingTaxa = TRUE,
+  order_y_by = rev(sort(unique(order_by_y_vec))), #call previous variable made
+  tax_class = TRUE,
+  plot_values = FALSE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  normalise = FALSE
+)
+
+ 
+```
+
+AMPVIS2 - CORE VENN DIAGRAMS - edited Apr/5/22
+
+```{r dev = c("png", "jpg", "pdf")}
+library(ampvis2)
+#venn diagram of core otus (https://madsalbertsen.github.io/ampvis2/reference/amp_venn.html)
+
+#"cut_a and cut_f are thresholds for defining when a OTU should be considered a "core" OTU. 
+
+#cut_a is the minimum abundance for being considered, Abundance cutoff in percent. OTU's below this abundance are excluded from the analysis. default 80%. We set this for 65% to account for presence in at least 2 samples (2/3 is 66.7% of biological replicates)
+
+#cut_f is the minimum frequency above the cut_a threshold for being considered a "core" OTU." Frequency cutoff in percent. OTU's within the top \code{cut_f} of the reads are considered a "core" OTU. default 0.1%. We set this for 0.001% as they did in this study: https://www.nature.com/articles/s42003-021-01690-5 so that any ASV must be above 0.001% read abundance to be counted. 
+
+#' Calculates the number of "core" OTUs shared by groups given thresholds for how frequent the OTUs should be above a certain abundance. Also returns the average abundance of the OTUs in a particular group.
+
+#detailed_output 	(logical) Return additional details or not. If TRUE, it is r
+#Recommended to save to an object and then access the additional data by View(object$data). (default: FALSE)
+
+venn_all <- amp_venn(
+  data,
+  group_by = "type",
+  cut_a = 0.001,
+  cut_f = 65,
+  text_size = 5,
+  normalise = TRUE,
+  detailed_output = TRUE
+)
+
+#between sites
+venn_site <- amp_venn(
+  data,
+  group_by = "site",
+  cut_a = .001,
+  cut_f = 65,
+  text_size = 5,
+  normalise = TRUE,
+  detailed_output = TRUE
+)
+
+#subset only OD 
+data_OD <- amp_subset_samples(data, site %in% c("OD"))
+
+venn_OD <- amp_venn(
+  data_OD,
+  group_by = "type",
+  cut_a = 0.001,
+  cut_f = 65,
+  text_size = 5,
+  normalise = TRUE,
+  detailed_output = TRUE
+)
+
+#subset only WT
+data_WT <- amp_subset_samples(data, site %in% c("WT"))
+
+venn_WT <- amp_venn(
+  data_WT,
+  group_by = "type",
+  cut_a = 0.001,
+  cut_f = 65,
+  text_size = 5,
+  normalise = TRUE,
+  detailed_output = TRUE
+)
+
+#subset crust
+data_biocrust <- amp_subset_samples(data, type %in% c("Biocrust"))
+
+venn_biocrust <- amp_venn(
+  data_biocrust,
+  group_by = "site",
+  cut_a = 0.001,
+  cut_f = 65,
+  text_size = 5,
+  normalise = TRUE,
+  detailed_output = TRUE
+)
+
+#save ASVs to an object 
+df_biocrust = venn_biocrust$Otutable
+
+#save df to .csv on local
+write.csv(x = df_biocrust, file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/df_biocrust.csv", row.names = FALSE)
+
+#View(venn_biocrust$data)
+
+data_inter <- amp_subset_samples(data, type %in% c("Initial"))
+
+venn_inter <- amp_venn(
+ data_inter,
+  group_by = "site",
+  cut_a = 0.001,
+   cut_f = 65,
+  text_size = 5,
+  normalise = TRUE,
+  detailed_output = TRUE
+)
+
+#save ASVs to an object 
+df_inter = venn_inter$Otutable
+
+#save df to .csv on local
+write.csv(x = df_inter, file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/df_inter.csv", row.names = FALSE)
+
+#subset heap
+data_heap <- amp_subset_samples(data, type %in% c("Heap"))
+
+ venn_heap <- amp_venn(
+  data_heap,
+  group_by = "site",
+  cut_a = 0.001,
+  cut_f = 65,
+  text_size = 5,
+  normalise = TRUE,
+  detailed_output = TRUE
+)
+
+#save ASVs to an object 
+df_heap = venn_heap$Otutable
+#venn_heap$plot
+ 
+#save df to .csv on local
+write.csv(x = df_heap, file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/df_heap.csv", row.names = FALSE)
+```
+
+AMPVIS - CORE HEATMAPS - edited MAr/13/22
+
+```{r dev = c("png", "jpg", "pdf")}
+#----------------------------------------------
+library(ampvis2)
+library(dplyr)
+#install.packages("readr")
+library(readr)
+
+#Make venn diagrams with only CORE ASVs
+  #load in tables 
+#try to do them all at once 
+
+#HEAP CORE HEATMAP
+#keep only rows that are "Core"
+df_heap2 <- df_heap[df_heap$Shared == "Core", ]
+
+
+#remove last column (using dplyr)
+df_heap2 <- select(df_heap2, -Shared)
+
+#rename row headers (using dplyr)
+df_heap2 <- df_heap2 %>%
+  rename(
+    OTU2 = OTU,
+  )
+
+asv.data <- read_csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/asv.table.csv", col_names = TRUE)
+
+#rename row headers (using dplyr)
+asv.data <- asv.data %>%
+  rename(
+    OTU = ...1,
+  )
+
+#SOLUTION FROM ROB Match up values from asv.data to df_heap2
+df_heap3 =
+  asv.data %>%
+  filter(`OTU` %in% df_heap2$OTU2) %>%
+  select(c(`OTU`, names(df_heap2) %>% grep("Juliette", ., value = T))) %>%
+  right_join(df_heap2[,1:8], by = c("OTU" = "OTU2"))
+
+
+data_heap <- amp_load(
+  otutable = df_heap3,
+   metadata = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/all/OUT_300721/halden_mapping_ampvis.txt",
+  taxonomy = NULL,
+  fasta = NULL,
+  tree = NULL,
+  pruneSingletons = TRUE
+)
+
+#this is from roberto, to order by phylum, THIS DOES NOT WORK FOR HEAPS
+order_by_y_vec = paste(data_heap$tax$Phylum, data_heap$tax$Class, sep = "; ")
+
+
+ plot_heap <- amp_heatmap(
+  data = data_heap,
+  tax_aggregate = "Class",
+  tax_add = "Phylum",
+  tax_show = 20,
+  showRemainingTaxa = TRUE,
+  order_y_by = rev(unique(order_by_y_vec)), #call previous variable made 
+  tax_class = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  color_vector = c( "whitesmoke", "royalblue4")
+)
+
+# #save plot as pdf on windows device
+# ggsave(
+#         "core_heap.jpeg",
+#         plot = last_plot(),
+#         device = NULL,
+#         path = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/core_venn",
+#         scale = 1,
+#        width = 5,
+#        height = 3,
+#        #units = c("in"),
+#         dpi = 500,
+#         limitsize = TRUE,
+#         bg = NULL        
+# )
+
+#------------------------------------------------------------------------------------------------------------------------------------------
+#INTERSTAGE CORE HEATMAP
+#keep only rows that are "Core"
+df_inter2 <- df_inter[df_inter$Shared == "Core", ]
+
+# write.csv(x = df_heap2, file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/df_inter2.csv", row.names = TRUE)
+
+#remove last column (using dplyr)
+df_inter2 <- select(df_inter2, -Shared)
+
+#rename row headers (using dplyr)
+df_inter2 <- df_inter2 %>%
+  rename(
+    OTU2 = OTU,
+  )
+
+# Match up values from asv.data to df_inter2
+df_inter3 =
+  asv.data %>%
+  filter(`OTU` %in% df_inter2$OTU2) %>%
+  select(c(`OTU`, names(df_inter2) %>% grep("Juliette", ., value = T))) %>%
+  right_join(df_inter2[,1:8], by = c("OTU" = "OTU2"))
+
+
+data_inter <- amp_load(
+  otutable = df_inter3,
+   metadata = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/all/OUT_300721/halden_mapping_ampvis.txt",
+  taxonomy = NULL,
+  fasta = NULL,
+  tree = NULL,
+  pruneSingletons = TRUE
+)
+
+#order by phylum 
+order_by_y_vec = paste(data_inter$tax$Phylum, data_inter$tax$Class, sep = "; ")
+
+plot_inter <- amp_heatmap(
+  data = data_inter,
+  tax_aggregate = "Class",
+  tax_add = "Phylum",
+  tax_show = 20,
+  showRemainingTaxa = TRUE,
+  order_y_by = rev(sort(unique(order_by_y_vec))),
+  tax_class = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  color_vector = c( "whitesmoke", "royalblue4")
+)
+# 
+# #save plot as pdf on windows device
+# ggsave(
+#         "core_inter.jpeg",
+#         plot = last_plot(),
+#         device = NULL,
+#         path = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/core_venn/",
+#         scale = 1,
+#        width = 5,
+#        height = 5,
+#        #units = c("in"),
+#         dpi = 500,
+#         limitsize = TRUE,
+#         bg = NULL        
+# )
+
+
+#------------------------------------------------------------------------------------------------------------------------------------------
+#BIOCRUST CORE HEATMAP
+#keep only rows that are "Core"
+df_biocrust2 <- df_biocrust[df_biocrust$Shared == "Core", ]
+
+#remove last column (using dplyr)
+df_biocrust2 <- select(df_biocrust2, -Shared)
+
+#rename row headers (using dplyr)
+df_biocrust2 <- df_biocrust2 %>%
+  rename(
+    OTU2 = OTU,
+  )
+
+# Match up values from asv.data to df_biocrust2
+df_biocrust3 =
+  asv.data %>%
+  filter(`OTU` %in% df_biocrust2$OTU2) %>%
+  select(c(`OTU`, names(df_biocrust2) %>% grep("Juliette", ., value = T))) %>%
+  right_join(df_biocrust2[,1:8], by = c("OTU" = "OTU2"))
+
+
+data_biocrust <- amp_load(
+  otutable = df_biocrust3,
+   metadata = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/all/OUT_300721/halden_mapping_ampvis.txt",
+  taxonomy = NULL,
+  fasta = NULL,
+  tree = NULL,
+  pruneSingletons = TRUE
+)
+
+order_by_y_vec = paste(data_biocrust$tax$Phylum, data_biocrust$tax$Class, sep = "; ")
+
+
+plot_biocrust <- amp_heatmap(
+  data = data_biocrust,
+  tax_aggregate = "Class",
+  tax_add = "Phylum",
+  tax_show = 20,
+  showRemainingTaxa = TRUE,
+  order_y_by = rev(sort(unique(order_by_y_vec))),
+  tax_class = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  color_vector = c( "whitesmoke", "royalblue4")
+)
+# 
+# #save plot as pdf on windows device
+# ggsave(
+#         "core_biocrust.jpeg",
+#         plot = last_plot(),
+#         device = NULL,
+#         path = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/core_venn/",
+#         scale = 1,
+#        width = 5,
+#        height = 7,
+#        #units = c("in"),
+#         dpi = 500,
+#         limitsize = TRUE,
+#         bg = NULL        
+# )
+
+#add them all up into one figure - This is weirdddd
+
+library(ggpubr)
+core_all <- ggarrange(plot_heap, plot_inter, plot_biocrust,
+                         labels = c("A.",  "B.", "C."),
+                         label.y = 0.05,
+                         label.x = 0.05,
+                         font.label = list(size = 18),
+                         nrow = 1,
+                         ncol = 3,
+                         #widths = c(1,0.05,1,0.05,1, 0.05,1,0.05,1 ),
+                         common.legend = TRUE, legend = "right"
+                      )
+core_all
+
+
+
+#------------------------------------------------------------------------------------------------------------------------------------------
+# HEAP CORE HEATMAP - GENUS LEVEL CLASSIFICATION
+
+#order by phylum THIS IS NOT WORKING
+order_by_y_vec = paste(data_heap$tax$Phylum, data_heap$tax$Genus, sep = "; ") 
+
+g1 <- amp_heatmap(
+  data = data_heap,
+  tax_aggregate = "Genus",
+  tax_add = "Phylum",
+  tax_show = 20,
+  showRemainingTaxa = TRUE,
+  #order_y_by = rev(unique(order_by_y_vec)), #call previous variable made 
+  tax_class = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  color_vector = c( "whitesmoke", "royalblue4")
+)
+
+# ggsave(
+#   "core_heap_genus.pdf",
+#   plot = last_plot(),
+#   device = NULL,
+#   path = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/core_venn/",
+#   scale = 1,
+#   width = 5,
+#   height = 5,
+#   #units = c("in"),
+#   dpi = 300,
+#   limitsize = TRUE,
+#   bg = NULL        
+# )
+
+#------------------------------------------------------------------------------------------------------------------------------------------
+# INTER CORE HEATMAP - GENUS LEVEL CLASSIFICATION
+
+#order by phylum THIS IS WORKING
+order_by_y_vec = paste(data_inter$tax$Phylum, data_inter$tax$Genus, sep = "; ")
+
+g2 <- amp_heatmap(
+  data = data_inter,
+  tax_aggregate = "Genus",
+  tax_add = "Phylum",
+  tax_show = 20,
+  showRemainingTaxa = TRUE,
+  order_y_by = rev(sort(unique(order_by_y_vec))),
+  tax_class = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  color_vector = c( "whitesmoke", "royalblue4")
+)
+# 
+# ggsave(
+#   "core_inter_genus_all.pdf",
+#   plot = last_plot(),
+#   device = NULL,
+#   path = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/core_venn/",
+#   scale = 1,
+#   width = 5,
+#   height = 20,
+#   #units = c("in"),
+#   dpi = 300,
+#   limitsize = TRUE,
+#   bg = NULL        
+# )
+
+#------------------------------------------------------------------------------------------------------------------------------------------
+# BIOCRUST CORE HEATMAP - GENUS LEVEL CLASSIFICATION
+
+#order by phylum THIS IS WORKING
+order_by_y_vec = paste(data_biocrust$tax$Phylum, data_biocrust$tax$Genus, sep = "; ")
+
+
+g3 <-amp_heatmap(
+  data = data_biocrust,
+  tax_aggregate = "Genus",
+  tax_add = "Phylum",
+  tax_show = 20,
+  showRemainingTaxa = TRUE,
+  order_y_by = rev(sort(unique(order_by_y_vec))),
+  tax_class = TRUE,
+  plot_values = TRUE, #this shows the numerical value of reads
+  group_by = "site",
+  facet_by = "type",
+  plot_colorscale = "sqrt",
+  color_vector = c( "whitesmoke", "royalblue4")
+)
+
+
+# #save plot as pdf on windows device
+# ggsave(
+#   "core_biocrust_genus_all.pdf",
+#   plot = last_plot(),
+#   device = NULL,
+#   path = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/20220404_with_archaea/core_venn/",
+#   scale = 1,
+#   width = 5,
+#   height = 20,
+#   #units = c("in"),
+#   dpi = 300,
+#   limitsize = TRUE,
+#   bg = NULL        
+# )
+
+core_all_genus <- ggarrange(g1, g2, g3,
+                         labels = c("A.",  "B.", "C."),
+                         label.y = 0.05,
+                         label.x = 0.05,
+                         font.label = list(size = 18),
+                         nrow = 1,
+                         ncol = 3,
+                         #widths = c(1,0.05,1,0.05,1, 0.05,1,0.05,1 ),
+                         common.legend = TRUE, legend = "right"
+                      )
+core_all_genus
+
+
+```
+
+AMP VIS MISC - OK on 2-18-22
+
+```{r dev = c("png", "jpg", "pdf")}
+#THIS IS JUST TESTING OTHER FUNCTIONS OF THE AMPVIS2 PACKAGE
+#MEAN READ ABUNDANCE (from https://madsalbertsen.github.io/ampvis2/articles/ampvis2.html)
+amp_boxplot(data_WT,
+ group_by = "type",
+            tax_show = 10,
+            tax_add = "Phylum")
+ 
+amp_boxplot(data_OD,
+ group_by = "type",
+            tax_show = 10,
+            tax_add = "Phylum")
+
+#ORDINATION PLOT - CCA
+ordinationresult <- amp_ordinate(data, 
+             type = "CCA",
+             constrain = "type",
+             transform = "Hellinger",
+             sample_color_by = "type",
+             sample_shape_by = "site",
+             #sample_colorframe = TRUE,
+             sample_colorframe_label = "type",
+             detailed_output = TRUE)
+
+ordinationresult$plot
+
+#add environmental variables with env fit
+
+#another CCA plot
+amp_ordinate(data, 
+             type = "CCA",
+             constrain = "type",
+             transform = "Hellinger",
+             sample_color_by = "type",
+             sample_shape_by = "site",
+             #sample_colorframe = TRUE,
+             sample_colorframe_label = "type",
+             #species_plot = TRUE,
+             species_label_taxonomy = "Genus",
+             detailed_output = TRUE)
+
+
+#PCOA
+amp_ordinate(data, 
+             type = "pcoa",
+             distmeasure = "bray",
+             sample_color_by = "type",
+            sample_shape_by = "site",
+             sample_colorframe = TRUE,
+             sample_colorframe_label = "site") # + 
+            #theme(legend.position = "blank")
+  
+amp_octave(
+  data,
+  tax_aggregate = "OTU",
+  group_by = 1L,
+  scales = "fixed",
+  num_threads = parallel::detectCores() - 2L
+)
+
+
+# Saunders, A., Albertsen, M., Vollertsen, J. et al. The activated sludge ecosystem contains a core community of abundant organisms. ISME J 10, 11–20 (2016). https://doi.org/10.1038/ismej.2015.117
+```
+
+ABIOTIC VALUES BAR PLOT - edited on Nov 23 2022
+
+```{r}
+#ABIOTIC VALUES 
+#for later: CAN use "facet_wrap()" to combine multiple graphs in one panel
+#load packages
+library(ggplot2)
+
+#REDONE ON 11 13 2022---------------------------------------------------------------------
+#load in abiotic dataset 
+abiotic_wide1 <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Abiotic_Data/20221123_abiotic_wide.csv", 
+                  header = TRUE, 
+           sep = ",",
+           dec = ".")
+
+#abiotic_wide1 <- read.csv("20221123_abiotic_wide.csv", 
+#                  header = TRUE, 
+#           sep = ",",
+#           dec = ".")
+
+#reorder
+abiotic_wide1$stage <- factor(abiotic_wide1$stage, levels =c("Heap","Initial", "Biocrust"))
+abiotic_wide1$type <- factor(abiotic_wide1$type, levels =c("Gradient", "Bulk"))
+
+#remove all bulk samples
+abiotic_wide_BSC <- abiotic_wide1[!(abiotic_wide1$type == "Bulk"),]
+abiotic_wide_BSC
+
+#barplot for pH-------
+p1 <- 
+  ggplot(data = abiotic_wide_BSC, aes(x = stage, y = pH_avg, fill = site)) + 
+  geom_bar(stat="identity", color = "black", position=position_dodge()) + 
+  # keep only upper error bars
+  geom_errorbar(aes(ymin = pH_avg, ymax = pH_avg+pH_sd), width = 0.2, 
+  position=position_dodge(.9)) +
+  theme_classic() +
+ # facet_wrap(~ type, scales = "free", ncol = 5, ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    #remove legend
+  legend.position = "none") + 
+  labs(title = "pH", x = "", y = "") +
+    scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black")) +
+   # add spacing 
+  theme(panel.spacing = unit(2, "lines")) +
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20)) 
+  
+
+#barplot for EC-------
+p2 <- 
+  ggplot(data = abiotic_wide_BSC, aes(x = stage, y = EC_avg, fill = site)) + 
+  geom_bar(stat="identity", color = "black", position=position_dodge()) + 
+  # keep only upper error bars
+  geom_errorbar(aes(ymin = EC_avg, ymax = EC_avg+EC_sd), width = 0.2, 
+  position=position_dodge(.9)) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+        #remove legend
+  legend.position = "none") +  
+  
+  labs(title = "EC", x = "", y = "mS/cm") +
+    scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black"))+
+    # add spacing 
+  theme(panel.spacing = unit(2, "lines")) +
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20)) 
+
+
+
+#barplot for Chlorophyll a-------
+p3 <- ggplot(data = abiotic_wide_BSC, aes(x = stage, y = Chla_avg, fill = site)) + 
+  geom_bar(stat="identity", color = "black", position=position_dodge()) + 
+  # keep only upper error bars
+  geom_errorbar(aes(ymin = Chla_avg, ymax = Chla_avg+Chla_sd), width = 0.2, 
+  position=position_dodge(.9)) +
+  theme_classic() +
+ # facet_wrap(~ type, scales = "free", ncol = 5, ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+        #remove legend
+  legend.position = "none") +  
+  labs(title = "Chl a", x = "", y = "μg/g dry soil") +
+    scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black"))+
+  # add spacing 
+  theme(panel.spacing = unit(2, "lines")) +
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20)) 
+
+
+#barplot for DOC-------
+p4 <- ggplot(data = abiotic_wide_BSC, aes(x = stage, y = DOC_avg, fill = site)) + 
+  geom_bar(stat="identity", color = "black", position=position_dodge()) + 
+  # keep only upper error bars
+  geom_errorbar(aes(ymin = DOC_avg, ymax = DOC_avg+DOC_sd), width = 0.2, 
+  position=position_dodge(.9)) +
+  theme_classic() +
+ # facet_wrap(~ type, scales = "free", ncol = 5, ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+        #remove legend
+  legend.position = "none") +  
+  labs(title = "DOC", x = "", y = "μg/g dry soil") +
+    scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black"))+
+  # add spacing 
+  theme(panel.spacing = unit(2, "lines")) +
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20)) 
+
+
+#barplot for TDN-------
+p5 <- ggplot(data = abiotic_wide_BSC, aes(x = stage, y = TNb_avg, fill = site)) + 
+  geom_bar(stat="identity", color = "black", position=position_dodge()) + 
+  # keep only upper error bars
+  geom_errorbar(aes(ymin = TNb_avg, ymax = TNb_avg+TNb_sd), width = 0.2, 
+  position=position_dodge(.9)) +
+  theme_classic() +
+ # facet_wrap(~ type, scales = "free", ncol = 5, ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    #remove legend
+  legend.position = "none") +   
+  labs(title = "TDN", x = "", y = "μg/g dry soil") +
+    scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black"))+
+  # add spacing 
+  theme(panel.spacing = unit(2, "lines")) +
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20)) 
+
+#combine plots in 1 row-------
+library(ggpubr)
+abiotic_BSC <- ggarrange(p1, NULL, p2, NULL, p3, NULL, p4, NULL, p5, #CCA_plot,
+          labels = c("A.", "", "B.", "","C.", "","D.", "","E."),
+          label.y = 0.1,
+          label.x = 0.1,
+          font.label = list(size = 18),
+             nrow = 1, widths = c(1,0.05,1,0.05,1,0.05,1,0.05,1 ),
+          common.legend = TRUE, legend = "right")
+abiotic_BSC
+
+#combine plots in 2 rows 
+abiotic_BSC <- ggarrange(p1, p2, NULL, p3,  p4,  p5, #CCA_plot,
+                         labels = c("B.",  "C.", "", "D.", "E.", "F."),
+                         label.y = 0.1,
+                         label.x = 0.1,
+                         font.label = list(size = 18),
+                         nrow = 2, 
+                         ncol = 3,
+                         #widths = c(1,0.05,1,0.05,1, 0.05,1,0.05,1 ),
+                         common.legend = TRUE, legend = "right")
+abiotic_BSC
+
+#barplots with BULK values---------------------------------------------------------
+
+#remove all GRADIENT samples
+abiotic_wide_Bulk <- abiotic_wide1[!(abiotic_wide1$type == "Gradient"),]
+abiotic_wide_Bulk
+
+#barplot for pH-------
+p6 <- 
+  ggplot(data = abiotic_wide_Bulk, aes(x = stage, y = pH_avg, fill = site)) + 
+  geom_bar(stat="identity", color = "black", position=position_dodge()) + 
+  # keep only upper error bars
+  geom_errorbar(aes(ymin = pH_avg, ymax = pH_avg+pH_sd), width = 0.2, 
+  position=position_dodge(.9)) +
+  theme_classic() +
+ # facet_wrap(~ type, scales = "free", ncol = 5, ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    #remove legend
+  legend.position = "none") + 
+  labs(title = "pH", x = "", y = "") +
+    scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black")) +
+   # add spacing 
+  theme(panel.spacing = unit(2, "lines")) +
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20)) 
+  
+
+#barplot for EC-------
+p7 <- 
+  ggplot(data = abiotic_wide_Bulk, aes(x = stage, y = EC_avg, fill = site)) + 
+  geom_bar(stat="identity", color = "black", position=position_dodge()) + 
+  # keep only upper error bars
+  geom_errorbar(aes(ymin = EC_avg, ymax = EC_avg+EC_sd), width = 0.2, 
+  position=position_dodge(.9)) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+        #remove legend
+  legend.position = "none") +  
+  
+  labs(title = "EC", x = "", y = "mS/cm") +
+    scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black"))+
+    # add spacing 
+  theme(panel.spacing = unit(2, "lines")) +
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20)) 
+
+
+#barplot for DOC-------
+p8 <- ggplot(data = abiotic_wide_Bulk, aes(x = stage, y = DOC_avg, fill = site)) + 
+  geom_bar(stat="identity", color = "black", position=position_dodge()) + 
+  # keep only upper error bars
+  geom_errorbar(aes(ymin = DOC_avg, ymax = DOC_avg+DOC_sd), width = 0.2, 
+  position=position_dodge(.9)) +
+  theme_classic() +
+ # facet_wrap(~ type, scales = "free", ncol = 5, ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+        #remove legend
+  legend.position = "none") +  
+  labs(title = "DOC", x = "", y = "μg/g dry soil") +
+    scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black"))+
+  # add spacing 
+  theme(panel.spacing = unit(2, "lines")) +
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20)) 
+
+-------
+#barplot for TDN
+p9 <- ggplot(data = abiotic_wide_Bulk, aes(x = stage, y = TNb_avg, fill = site)) + 
+  geom_bar(stat="identity", color = "black", position=position_dodge()) + 
+  # keep only upper error bars
+  geom_errorbar(aes(ymin = TNb_avg, ymax = TNb_avg+TNb_sd), width = 0.2, 
+  position=position_dodge(.9)) +
+  theme_classic() +
+ # facet_wrap(~ type, scales = "free", ncol = 5, ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    #remove legend
+  legend.position = "none") +   
+  labs(title = "TDN", x = "", y = "μg/g dry soil") +
+    scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black"))+
+  # add spacing 
+  theme(panel.spacing = unit(2, "lines")) +
+  #change text size
+  theme(plot.title = element_text(size = 20)) +
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20)) 
+
+#combine plots in 1 row
+library(ggpubr)
+abiotic_Bulk <- ggarrange(p6, NULL, p7, NULL, p8, NULL, p9,  #CCA_plot,
+          labels = c("A.", "", "B.", "","C.", "","D."),
+          label.y = 0.1,
+          label.x = 0.1,
+          font.label = list(size = 18),
+             nrow = 1, widths = c(1,0.05,1,0.05,1,0.05,1 ),
+          common.legend = TRUE, legend = "right")
+
+abiotic_Bulk
+
+
+
+#an example of a boxplot------------------------
+
+#TOTAL CARBON
+ggplot(abiotic_wide1, aes(x = stage, y = pH, fill = site)) +
+ geom_boxplot() + facet_wrap(~type) + 
+  scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black")) + 
+    #change labels
+ labs(title = "pH", x = "Stage", y = "NA") +
+ #theme_minimal()+
+   theme_bw()+
+  #change theme
+  theme(
+    #add borders
+  panel.border = element_rect(color = "grey85", fill = NA),
+    #element_rect(fill = "black"),
+  #legend
+  legend.position = "right",
+  #center title
+  plot.title = element_text(hjust = 0.5),
+  #change all text size
+  text = element_text(size = 20)
+         ) 
+
+-----------
+```
+
+STATISTICAL ANALYSIS - ABIOTIC AND QPCR DATA
+
+```{r}
+# use abiotic_wide for stats, code edited on: Nov 30 2022
+# ref: https://towardsdatascience.com/parametric-vs-non-parametric-tests-and-where-to-use-them-85130b3877dc
+# A DATASET IS PARAMETRIC IF IT IS NORMAL, IS INDEPENDENT, HAS NO OUTLIERS, AND HAS EQUAL VARIANCE
+
+library("dplyr")
+#install.packages("ggpubr")
+library("ggpubr")
+library("MASS")
+#install.packages("car")
+library(car)
+
+qPCR_wide <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Raw_Data/qPCR/qPCR_wide.csv", 
+                  header = TRUE, 
+           sep = ",",
+           dec = ".")
+
+#qPCR_wide <- read.csv("qPCR_wide.csv", 
+#                  header = TRUE, 
+#           sep = ",",
+#           dec = ".")
+
+abiotic_wide <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Abiotic_Data/20221122_abiotic_wide.csv", 
+                  header = TRUE, 
+           sep = ",",
+           dec = ".")
+
+abiotic_wide <- read.csv("20221122_abiotic_wide.csv", 
+                  header = TRUE, 
+           sep = ",",
+           dec = ".") 
+
+ 
+# Dec 2 2022 LINEAR MODELS
+  
+#chlorophyll - LOOKS GOOD on 12/12/2022 -----------
+  log_Chl_a <- log(abiotic_wide_BSC$Chla)
+  shapiro.test(log_Chl_a) #NORMAL p-value = 0.2299
+  chla_test <- lm(log_Chl_a ~ site*stage, data = abiotic_wide_BSC)
+  summary(chla_test)
+  plot(lm(log_Chl_a ~ site*stage, data = abiotic_wide_BSC)) #looks good
+  
+# install.packages(c("mvtnorm","estimability","numDeriv","xtable","plyr","emmeans"))
+# library("lsmeans")  
+# #install.packages("multcompView")  
+# library("multcompView")  
+
+  #pairwise comparisons  
+lsmeans(chla_test, pairwise~site*stage, adjust="tukey")
+
+lsmeans(chla_test, pairwise~site*stage, adjust="none")
+marginal = lsmeans(chla_test, ~ site*stage)
+multcomp::cld(marginal,
+              alpha=0.05,
+              Letters=letters, adjust="none")
+  
+
+#qPCR: 16S bacteria -----------
+    #transforming 16S bacteria
+    log_bac_16S <- log(qPCR_wide$bac_16S)
+    shapiro.test(log_bac_16S) #0.008036
+    
+    #linear model
+    test1 <- lm(qPCR_wide$bac_16S ~ site*type, data = qPCR_wide)
+    summary(test1) #0.02
+    plot(test1) #OK
+    
+    test2 <- lm(log_bac_16S ~ site*type, data = qPCR_wide)
+    summary(test2) #p-value: 4.594e-05
+    plot(test2) #residuals arent great but the qqplot is much better
+    
+    #generalized linear model
+    test2g <- glm(log_bac_16S ~ site*type, data = qPCR_wide)
+    test2g
+    plot(test2g)
+    
+    #calculate residuals
+    res1 <- residuals(test1) 
+    res2 <- residuals(test2)
+    
+    #shapiro test for normality for residuals (if they are normal then you CAN use a linear model/ANOVA - CHECK ME)
+    shapiro.test(res1) #0.0743
+    shapiro.test(res2) #0.3828
+    
+    #check which model is the best, use the lowest AIC value 
+    AIC(test1, test2) # here test 2 is lower so you should use that 
+     
+    #ANOVA - in this case probably not appropriate
+    test_a1 <- aov(log_bac_16S ~ site*type, data = qPCR_wide)
+    summary(test_a1)
+
+  #pairwise comparisons 
+  lsmeans(test2, pairwise~site*type, adjust="none")
+  marginal = lsmeans(test2, ~ site*type)
+  multcomp::cld(marginal,
+              alpha=0.05,
+              Letters=letters, adjust="none")
+    
+#qPCR: 16S bacteria per g DRY SOIL--------------------------
+    #transforming 16S bacteria
+    log_bac_16S_ds <- log(qPCR_wide$bac_16S_ds)
+    shapiro.test(log_bac_16S_ds) #W = 0.9039, p-value = 0.06722
+    
+    #linear model
+    test1 <- lm(qPCR_wide$bac_16S_ds ~ site*type, data = qPCR_wide)
+    summary(test1) 
+    plot(test1) #
+    
+    test2 <- lm(log_bac_16S_ds ~ site*type, data = qPCR_wide)
+    summary(test2) #p-value: 6.747e-06
+    plot(test2) 
+    
+    #generalized linear model
+    test2g <- glm(log_bac_16S_ds ~ site*type, data = qPCR_wide)
+    test2g
+    plot(test2g)
+    
+    #calculate residuals
+    res1 <- residuals(test1) 
+    res2 <- residuals(test2)
+    
+    #shapiro test for normality for residuals (if they are normal then you CAN use a linear model/ANOVA - CHECK ME)
+    shapiro.test(res1) #p-value = 0.01247
+    shapiro.test(res2) #p-value = 0.4946
+    
+    #check which model is the best, use the lowest AIC value 
+    AIC(test1, test2) # here test 2 is lower so you should use that 
+     
+    #ANOVA 
+    test_a1 <- aov(log_bac_16S_ds ~ site*type, data = qPCR_wide)
+    summary(test_a1)
+
+  #pairwise comparisons 
+  lsmeans(test2, pairwise~site*type, adjust="none")
+  marginal = lsmeans(test2, ~ site*type)
+  multcomp::cld(marginal,
+              alpha=0.05,
+              Letters=letters, adjust="none")  
+  
+#qPCR: 16S archaea per g DRY SOIL  
+  #remove 0 values   
+  arc_16S_data_ds <- qPCR_wide[-9,]
+  
+  #transform 
+  log_arc_16S_ds <- log(arc_16S_data_ds$arc_16S_ds)
+  shapiro.test(log_arc_16S_ds) #NOT NORMAL p-value = 0.02766
+  ggqqplot(log_arc_16S_ds) #not normal
+  
+  test3 <- lm(arc_16S_data_ds$arc_16S_ds ~ site*type, data = arc_16S_data_ds)
+  summary(test3) #p-value: 0.157
+  res3 <- residuals(test3)
+  shapiro.test(res3)#0.006393
+
+  #try a different transformation
+  spreadLevelPlot(test3) #Suggested power transformation:  -0.01922019 
+  
+  test4 <- lm(log_arc_16S_ds ~ site*type, data = arc_16S_data_ds)
+  summary(test4) # p-value: 0.0003666
+  res4 <- residuals(test4)
+  shapiro.test(res4) #OK p-value = 0.5882
+ 
+  #plot
+  plot(test3) #looks OK
+  plot(test4) #residuals are bad, qq plot is good
+  
+  AIC(test3, test4) #test 4 is better here TAKE TEST 4
+
+  #pairwise comparisons
+  lsmeans(test4, pairwise~site*type, adjust="none")
+  marginal = lsmeans(test4, ~ site*type)
+  multcomp::cld(marginal,
+              alpha=0.05,
+              Letters=letters, adjust="none")
+  
+  
+  
+  
+ #qPCR Archaeal 16S OK ON 12/13/22------------
+  #remove 0 values   
+  arc_16S_data <- qPCR_wide[-9,]
+  #transform 
+  log_arc_16S <- log(arc_16S_data$arc_16S)
+  shapiro.test(log_arc_16S) #NOT NORMAL p-value = 0.004447
+  ggqqplot(log_arc_16S) #not normal
+  
+  test3 <- lm(qPCR_wide$arc_16S ~ site*type, data = qPCR_wide)
+  summary(test3) #p-value: 0.6043
+  res3 <- residuals(test3)
+  shapiro.test(res3)#this is OK p-value = 0.09408
+
+  #try a different transformation
+  spreadLevelPlot(test3) #Suggested power transformation:  -0.01673611 
+  
+  test4 <- lm(log_arc_16S ~ site*type, data = arc_16S_data)
+  summary(test4) #not normal p-value: 0.0008961 
+  res4 <- residuals(test4)
+  shapiro.test(res4) #OK p-value = 0.9435
+ 
+  #plot
+  plot(test3) #looks OK
+  plot(test4) #residuals are bad, qq plot is good
+  
+  AIC(test3, test4) #test 4 is better here TAKE TEST 4
+
+  #pairwise comparisons
+  lsmeans(test4, pairwise~site*type, adjust="none")
+  marginal = lsmeans(test4, ~ site*type)
+  multcomp::cld(marginal,
+              alpha=0.05,
+              Letters=letters, adjust="none")
+  
+#DOC ---------------
+  shapiro.test(abiotic_wide_BSC$DOC) #not normal p-value = 0.001184
+  log_DOC <- log(abiotic_wide_BSC$DOC)
+  shapiro.test(log_DOC) #NOT NORMAL p-value = 0.007513
+  test5 <- (lm(log_DOC ~ site*stage, data = abiotic_wide_BSC))
+  
+  #test residuals
+  res5 <- residuals(test5)
+  shapiro.test(res5) #NORMAL, p-value = 0.7507
+  plot(test5) #all look good
+  summary(test5)
+  
+  #pairwise comparisons 
+  lsmeans(test5, pairwise~site*stage, adjust="none")
+  marginal = lsmeans(test5, ~ site*stage)
+  multcomp::cld(marginal,
+                alpha=0.05,
+                Letters=letters, adjust="none")
+
+#pH  ------------
+  shapiro.test(abiotic_wide_BSC$pH) #NORMAL p-value = 0.2822
+  plot(lm(abiotic_wide_BSC$pH ~ site*stage, data = abiotic_wide_BSC)) #all look good
+  ph <- lm(abiotic_wide_BSC$pH ~ site*stage, data = abiotic_wide_BSC)
+  summary(ph)
+
+  #pairwise comparisons 
+  lsmeans(ph, pairwise~site*stage, adjust="none")
+  marginal = lsmeans(ph, ~ site*stage)
+  multcomp::cld(marginal,
+                alpha=0.05,
+                Letters=letters, adjust="none")
+     
+  #TDN -this is ok on 12/13/22 ------------
+  log_TDN <- log(abiotic_wide_BSC$TNb)
+  shapiro.test(log_TDN) #NOT NORMAL p-value = 0.04997
+  test6 <- (lm(log_TDN ~ site*stage, data = abiotic_wide_BSC))
+  #test residuals
+  res6 <- residuals(test6)
+  shapiro.test(res6) #NORMAL, then OK 0.04814
+  plot(test6) # looks good
+  summary(test6)
+  
+  #pairwise comparisons 
+  lsmeans(test6, pairwise~site*stage, adjust="none")
+  marginal = lsmeans(test6, ~ site*stage)
+  multcomp::cld(marginal,
+                alpha=0.05,
+                Letters=letters, adjust="none")
+  
+
+#EC  -----------------
+  #TO DO: lm on UNtransformed data and then check for residuals 
+  poop <- lm(EC ~ site*stage, data = abiotic_wide_BSC)
+  shapiro.test(abiotic_wide_BSC$EC) #not  normal p-value = 0.0002117
+  summary(poop) #p-value: 2.061e-10
+  
+  #test residuals
+  respoop <- residuals(poop)
+  shapiro.test(respoop) #ARE NOT NORMAL p-value = 0.003313
+  plot(respoop)
+
+  #log xform
+  log_EC <- log(abiotic_wide_BSC$EC)
+  test7 <- (lm(log_EC ~ site*stage, data = abiotic_wide_BSC))
+  res7 <- residuals(test7)
+  shapiro.test(res7) #ARE NOT NORMAL p-value = 0.0125
+  plot(test7)
+
+  
+  #TO DO: check for colinerarity using (variance inflation factor) vif, if >5,10 then colinear https://www.statology.org/variance-inflation-factor-r/
+  
+  #install.packages("vif")  
+  
+  poop <- lm(formula = EC ~ site+stage, data = abiotic_wide_BSC)
+  #create vector of VIF values
+    vif_values <- vif(poop)
+    
+    #create horizontal bar chart to display each VIF value
+    barplot(vif_values, main = "VIF Values", horiz = TRUE, col = "steelblue")
+    
+    #add vertical line at 5
+    abline(v = 5, lwd = 3, lty = 2)
+  
+  #TO DO:if its not working, then just use NP tests
+  ggqqplot(abiotic_wide_BSC$EC) #not normal
+  # NOW do box cox transformation
+  # https://www.projectpro.io/recipes/what-is-box-cox-transformation-r
+  box_cox <- boxcox(log_EC ~ site*stage, data = abiotic_wide_BSC)
+  (lambda <- box_cox$x[which.max(box_cox$y)])  
+  new_model <- lm(((log_EC^lambda-1)/lambda) ~ site*stage, data = abiotic_wide_BSC)
+  qqnorm(new_model$residuals)
+  plot(new_model)
+  res8 <- residuals(new_model)
+  shapiro.test(res8) #RESIDUALS ARE NOT NORMAL p-value = 0.006566
+  
+  #check for outliers
+      ggplot(abiotic_wide_BSC) +
+      aes(x = , y = EC) +
+      geom_boxplot(fill = "#0c4c8a") +
+      theme_minimal() #one outliers 
+      
+  #try GLM
+  test3g <- glm(log_EC ~ site*stage, data = abiotic_wide_BSC)
+  test3g 
+  res9 <- residuals(test3g)
+  shapiro.test(res9) # NOT NORMAL  p-value = 0.0125
+  
+  #try a different boxcox
+  box_cox2 <- log_EC^coef(powerTransform(log_EC))
+  test8 <- lm(box_cox2~site*stage, data = abiotic_wide_BSC)
+  res10 <- residuals(test8)
+  shapiro.test(res10) #RESIDUALS ARE NOT NORMAL p-value = 0.0001418
+
+           ####you are here
+
+  
+  #try a different transformation
+  spreadLevelPlot(lm(EC ~ site*stage, data = abiotic_wide_BSC)) 
+  #Suggested power transformation:  -0.7790933 
+  pow_EC <- (abiotic_wide_BSC$EC^-0.7790933)
+  test11 <- (lm(pow_EC ~ site*stage, data = abiotic_wide_BSC))
+  res11 <- residuals(test11)
+  shapiro.test(res11) #p-value = 0.0001069
+  plot(test11)
+  summary(test11) 
+  
+  #non-constant error variance test (Breusch-Pagan test)
+  ncvTest(test8)  #p = p = 0.67942
+
+  #now do non-parametric tests for this
+  kruskal.test(EC ~ stage, data = abiotic_wide_BSC) 
+ 
+  #ABIOTIC PARAMETERS BY SITE AND TYPE (site: WT/OD, )
+  wilcox.test(EC ~ site, data = abiotic_wide_BSC) 
+
+  pairwise.wilcox.test(abiotic_wide_BSC$EC, abiotic_wide_BSC$stage,
+                   p.adjust.method = "BH")
+
+  
+  
+  
+  
+  
+  
+  
+  
+  ####################
+
+#OLD Dec 1 2022--------------------------
+  # tests to check for normality --------------
+    #use a qqplot (if they fall within the grey area then it is normal)
+    ggqqplot(abiotic_wide$pH) # normal
+    ggqqplot(abiotic_wide$DON) #not normal
+    ggqqplot(abiotic_wide_BSC$EC) #almost
+    ggqqplot(qPCR_wide$bac_16S) #looks OK
+    ggqqplot(qPCR_wide$arc_16S) #not normal
+  
+    #density plot
+    ggdensity(abiotic_wide$EC, 
+            main = "Density plot",
+            xlab = "EC") 
+  
+    #Shapiro-Wilk (if P > 0.05 then it is normal)
+    shapiro.test(abiotic_wide$DON) # Normal 0.06561
+    shapiro.test(abiotic_wide1$DOC) #NOT NORMAL
+    shapiro.test(abiotic_wide_BSC$EC) #not normal 0.0002
+    shapiro.test(qPCR_wide$bac_16S) #not normal 0.0037
+    shapiro.test(qPCR_wide$arc_16S) #not normal 0.0001
+  
+    #Kolmogorov-Smirnov test
+  
+  #tests to check for independence 
+    # Chi-squared (if P > 0.05 then it is independent) -----------
+    # i did not do this..
+    
+    
+    # tests to check for outliers -----------------------
+    #using a boxplot
+    ggplot(abiotic_wide_BSC) +
+      aes(x = stage, y = Chla) +
+      geom_boxplot(fill = "#0c4c8a") +
+      theme_minimal() #NO OUTLIERS
+    
+    boxplot(abiotic_wide$DON,
+      ylab = "p"
+    ) #NO OUTLIERS
+   
+     ggplot(qPCR_wide) +
+      aes(x = type, y = arc_16S) +
+      geom_boxplot(fill = "#0c4c8a") +
+      theme_minimal() #NO OUTLIERS
+  
+    # tests for equal variance --------------
+    #https://www.geeksforgeeks.org/homogeneity-of-variance-test-in-r-programming/
+  
+    #check for equal variance for normally distributed samples of two or more groups using Bartlett's test (if p > 0.05 then there is no significant difference) 
+    library("stats")
+    bartlett.test(pH ~ site, data = abiotic_wide_BSC) #EQUAL
+    bartlett.test(pH ~ site, data = abiotic_wide) #NOT EQUAL
+    bartlett.test(pH ~ type, data = abiotic_wide) #EQUAL
+    
+    bartlett.test(bac_16S ~ type, data = qPCR_wide) #NOT EQUAL
+    bartlett.test(arc_16S ~ type, data = qPCR_wide) #EQUAL
+  
+    #check for equal variance for NOT normally distributed samples
+    leveneTest(EC ~ site, data = abiotic_wide) #OK
+    leveneTest(EC ~ stage, data = abiotic_wide) #<0.05
+    leveneTest(EC ~ type, data = abiotic_wide) #OK
+  
+    leveneTest(bac_16S ~ type, data = qPCR_wide) #OK
+    leveneTest(arc_16S ~ type, data = qPCR_wide) #OK
+    
+  #NON-PARAMETRIC TESTS ---------------
+    #https://www.r-tutor.com/elementary-statistics/non-parametric-methods
+    # Kruskal wallis test ----------------------------- 
+      #non- parametric test for INDEPENDENT variables equal location parameters in a one-way layout for MORE THAN TWO VARIABLES
+      
+      #ABIOTIC PARAMETERS by stage
+      kruskal.test(pH ~ stage, data = abiotic_wide) #SIGNIFICANT
+      kruskal.test(pH ~ stage, data = abiotic_wide_BSC) #SIGNIFICANT
+      kruskal.test(EC ~ stage, data = abiotic_wide) 
+      kruskal.test(Chl_a ~ stage, data = abiotic_wide) 
+      kruskal.test(TNb ~ stage, data = abiotic_wide1)
+      kruskal.test(Ges_N ~ stage, data = abiotic_wide1)
+      
+      #qPCR  by stage (IN THIS DATAFRAME "STAGE" IS LABELLED AS "TYPE")
+      kruskal.test(bac_16S ~ type, data = qPCR_wide)
+      kruskal.test(arc_16S ~ type, data = qPCR_wide)
+      kruskal.test(ITS ~ type, data = qPCR_wide)
+      kruskal.test(NS_16S ~ type, data = qPCR_wide)
+      kruskal.test(AOA ~ type, data = qPCR_wide)
+      kruskal.test(AOB ~ type, data = qPCR_wide)
+      kruskal.test(nxrA ~ type, data = qPCR_wide)
+      kruskal.test(hzsB ~ type, data = qPCR_wide)
+      
+      
+    # Mann-Whitney-Wilcoxon test ------------------------ 
+      #non parametric test for ONLY 2 INDEPENDENT variables difference in rank sum
+      
+      #ABIOTIC PARAMETERS BY SITE AND TYPE (site: WT/OD, type: Gradient/Bulk)
+      wilcox.test(pH ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(pH ~ site, data = abiotic_wide) 
+      wilcox.test(pH ~ type, data = abiotic_wide) 
+      
+      wilcox.test(EC ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(EC ~ site, data = abiotic_wide) 
+      wilcox.test(EC ~ type, data = abiotic_wide) 
+      
+      wilcox.test(Chla ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(chla ~ site, data = abiotic_wide) 
+       
+      wilcox.test(DOC ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(DOC ~ site, data = abiotic_wide1) 
+      wilcox.test(DOC ~ type, data = abiotic_wide1)
+      
+      wilcox.test(Ges_N ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(Ges_N ~ site, data = abiotic_wide1) 
+      wilcox.test(Ges_N ~ type, data = abiotic_wide1)
+      
+      wilcox.test(DON ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(DON ~ site, data = abiotic_wide1) 
+      wilcox.test(DON ~ type, data = abiotic_wide1)
+      
+      wilcox.test(NH4 ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(NH4 ~ site, data = abiotic_wide1) 
+      wilcox.test(NH4 ~ type, data = abiotic_wide1)
+      
+      wilcox.test(NO3 ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(NO3 ~ site, data = abiotic_wide1) 
+      wilcox.test(NO3 ~ type, data = abiotic_wide1)
+      
+      wilcox.test(NO2 ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(NO2 ~ site, data = abiotic_wide1) 
+      wilcox.test(NO2 ~ type, data = abiotic_wide1)
+      
+      wilcox.test(TNb ~ site, data = abiotic_wide_BSC) 
+      wilcox.test(TNb ~ site, data = abiotic_wide1) 
+      wilcox.test(TNb ~ type, data = abiotic_wide1)
+      
+      #QPCR BY SITE
+      wilcox.test(bac_16S ~ site, data = qPCR_wide)
+      wilcox.test(arc_16S ~ site, data = qPCR_wide)
+      wilcox.test(ITS ~ site, data = qPCR_wide)
+      wilcox.test(NS_16S ~ site, data = qPCR_wide)
+      wilcox.test(AOA ~ site, data = qPCR_wide)
+      wilcox.test(AOB ~ site, data = qPCR_wide)
+      wilcox.test(nxrA ~ site, data = qPCR_wide)
+      wilcox.test(hzsB ~ site, data = qPCR_wide)
+    
+    
+    # Wilcoxon Signed-Rank test  ----------------
+      #for DEPENDENT pairs,  from repeated observations of the same subject
+      
+      #ABIOTIC COMPARISON BETWEEN BSC ONLY AND BSC + BULK COMBINED
+      wilcox.test(abiotic_wide_BSC$pH, abiotic_wide_Bulk$pH, paired=TRUE) #NOT SIG
+      wilcox.test(abiotic_wide_BSC$EC, abiotic_wide_Bulk$EC, paired=TRUE) #SIGNIFICANT
+      wilcox.test(abiotic_wide_BSC$DOC, abiotic_wide_Bulk$DOC, paired=TRUE) #SIGNIFICANT
+      wilcox.test(abiotic_wide_BSC$DON, abiotic_wide_Bulk$DON, paired=TRUE) #SIGNIFICANT
+      wilcox.test(abiotic_wide_BSC$NO3, abiotic_wide_Bulk$NO3, paired=TRUE) #SIGNIFICANT
+      wilcox.test(abiotic_wide_BSC$NO2, abiotic_wide_Bulk$NO2, paired=TRUE) #NOT SIG
+      wilcox.test(abiotic_wide_BSC$NH4, abiotic_wide_Bulk$NH4, paired=TRUE) #NOT SIG
+      wilcox.test(abiotic_wide_BSC$Ges_N, abiotic_wide_Bulk$Ges_N, paired=TRUE) #SIGNIFICANT
+    
+    
+  
+      
+    # NONPARAMETRIC ALTERNATIVE TO PAIRWISE T-TEST --------------------    
+      #http://www.sthda.com/english/wiki/kruskal-wallis-test-in-r#multiple-pairwise-comparison-between-groups
+       #remake these from the combined dataset
+        pairwise.wilcox.test(abiotic_wide$pH, abiotic_wide$stage,
+                   p.adjust.method = "BH")
+      
+        pairwise.wilcox.test(abiotic_wide$EC, abiotic_wide$stage,
+                   p.adjust.method = "BH")
+        
+        pairwise.wilcox.test(abiotic_wide1$DOC, abiotic_wide$stage,
+                   p.adjust.method = "BH")
+        
+        pairwise.wilcox.test(abiotic_wide$Ges.N_g, abiotic_wide$stage, 
+                   p.adjust.method = "BH") #not significant, just checking
+       
+         #from the BSC only dataset
+        pairwise.wilcox.test(abiotic_wide_BSC$pH, abiotic_wide$stage,
+                   p.adjust.method = "BH")
+      
+        pairwise.wilcox.test(abiotic_wide_BSC$EC, abiotic_wide$stage,
+                   p.adjust.method = "BH")
+        
+        pairwise.wilcox.test(abiotic_wide_BSC$DOC, abiotic_wide$stage,
+                   p.adjust.method = "BH")
+              
+        pairwise.wilcox.test(abiotic_wide$Chl_a, abiotic_wide$stage,
+                   p.adjust.method = "BH")   
+              
+        pairwise.wilcox.test(qPCR_wide$bac_16S, qPCR_wide$type,
+                   p.adjust.method = "BH")
+        
+        #extras (not in paper)
+        pairwise.wilcox.test(abiotic_wide$DON, abiotic_wide$stage,
+                   p.adjust.method = "BH")
+      
+        pairwise.wilcox.test(abiotic_wide$TNb_g, abiotic_wide$stage,
+                   p.adjust.method = "BH")
+        
+        pairwise.wilcox.test(qPCR_wide$ITS, qPCR_wide$type,
+                   p.adjust.method = "BH")
+  
+        pairwise.wilcox.test(qPCR_wide$nxrA, qPCR_wide$type,
+                   p.adjust.method = "BH")
+     
+     
+# OLD DATA ----------oldest -----------------------------------------
+#install.packages("reshape") 
+#library(reshape)
+
+abiotic_wide2 <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Abiotic_Data/20220314_abiotic_wide2.csv", 
+                  header = TRUE, 
+           sep = ",",
+           dec = ".")
+
+summary(abiotic_wide2)
+
+abiotic_wide2 <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Abiotic_Data/20220314_abiotic_wide2.csv")
+
+#reorder
+abiotic_wide2$type <- factor(abiotic_wide2$type, levels =c("heap","initial", "biocrust"))
+abiotic_wide2$sampl <- factor(abiotic_wide2$sampl, levels =c("heap_OD","initial_OD", "biocrust_OD","heap_WT","initial_WT", "biocrust_WT"))
+
+boxplot(pH ~ sampl, data = abiotic_wide2, 
+        ylab = "pH", xlab = "sampl")
+
+#Because you only have 3 observations per sample (n=3), then do:
+
+#Welch one-way test = ANOVA test with no assumption of equal variances 
+#ON SAMPLE 
+oneway.test(pH ~ sampl, data = abiotic_wide2)
+
+#ON STAGE
+oneway.test(pH ~ type, data = abiotic_wide2)
+
+#ON SITE LOCATION
+oneway.test(pH ~ site, data = abiotic_wide2)
+
+
+#extract just p-value
+p <- as.numeric(oneway.test(pH ~ sampl, data = abiotic_wide2)$p.value)
+
+#as.numeric(oneway.test(Nitrate..µg.g.1.soil. ~ sampl, data = abiotic_wide2)$p.value)
+
+#Pairwise t-tests with no assumption of equal variances with bonferroni correction
+#Note: because there are only 2 sites, then you do not need to do any pairwise comparison testing because the previous Welchs test does that for you - outputs the same values.
+
+#ON SAMPLE STAGE
+pairwise.t.test(abiotic_wide2$pH, abiotic_wide2$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+
+#output t.test to dataframe
+test <- pairwise.t.test(abiotic_wide2$pH, abiotic_wide2$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+write.table(test[["p.value"]], file="t_test_pH.csv", sep=",")
+
+
+```
+
+CCA (constrained ordination) WITH EIGENVECTOR EXPLANATORY ARROWS
+(ABIOTIC)
+
+```{r}
+#make a CCA plot - CONSTRAINED ORDINATION
+#see this site: 
+#https://rdrr.io/cran/vegan/man/plot.cca.html
+#https://gist.github.com/perrygeo/7572735
+#http://userweb.eng.gla.ac.uk/umer.ijaz/bioinformatics/ecological.html
+#This is in order to see the correlations between the abiotic variables with the bacterial groups found in the 16S dataset
+
+#load required packages
+library(vegan)
+library(labdsv)
+library(ape)
+library(dplyr)
+
+#transpose otu dataset, make headers ASV values, maybe find actual file for this and link path instead of copy paste...
+
+asv.data.t <- read.delim(pipe("pbpaste"),header = T, row.names = 1)
+
+#get chemical data in proper df
+chem.data.cca <- read.delim(pipe("pbpaste"),header = T, row.names = 1)
+
+#plot cca
+halden.cca <- cca(asv.data.t ~ DOC+Nitrite+Nitrate+Ammonium+Total_N+TDN+pH+ChlA+EC,data=chem.data.cca)
+halden.cca
+plot(halden.cca)
+
+plot(cca(asv.data.t~ DOC,data=chem.data.cca))
+#this data needs to be transformed, or I need to create a correlation matrix to remove the variables that are cores
+
+# TRY UNCONSTRAINED ORDINATION, following this tutorial
+# https://ourcodingclub.github.io/tutorials/ordination/
+
+#NMDS
+asv.data.t %>%
+  metaMDS(trace = F) %>%
+  ordiplot(type = "none") %>%
+  text("sites")
+
+#--------------------------------------------------------------------------------
+#PCA
+PCA <- rda(asv.data.t, scale = TRUE)
+# Use scale = TRUE if your variables are on different scales (e.g. for abiotic variables).
+# Here, all species are measured on the same scale 
+# So use scale = FALSE
+
+# Now plot a bar plot of relative eigenvalues. This is the percentage variance explained by each axis
+barplot(as.vector(PCA$CA$eig)/sum(PCA$CA$eig)) 
+# How much of the variance in our dataset is explained by the first principal component?
+
+# Calculate the percent of variance explained by first two axes
+sum((as.vector(PCA$CA$eig)/sum(PCA$CA$eig))[1:2]) # 79%, this is ok.
+# Also try to do it for the first three axes
+
+# Now, we`ll plot our results with the plot function
+plot(PCA)
+plot(PCA, display = "sites", type = "text")
+#plot(PCA, display = "species", type = "text")
+
+#--------------------------------------------------------------------------------
+# You can extract the species and site scores on the new PC for further analyses:
+sitePCA <- PCA$CA$u # Site scores
+speciesPCA <- PCA$CA$v # Species scores
+
+# In a biplot of a PCA, species' scores are drawn as arrows 
+# that point in the direction of increasing values for that variable
+biplot(PCA, choices = c(1,2), type = c("points"), xlim = c(-5,10)) # biplot of axis 1 vs 2
+biplot(PCA, choices = c(1,3), type = c("points")) # biplot of axis 1 vs 3
+
+#--------------------------------------------------------------------------------
+# First step is to calculate a distance matrix. 
+# Here we use Bray-Curtis distance metric
+dist <- vegdist(asv.data.t,  method = "bray")
+
+# PCoA is not included in vegan. 
+# We will use the ape package instead
+library(ape)
+PCOA <- pcoa(dist)
+
+# plot the eigenvalues and interpret
+barplot(PCOA$values$Relative_eig[1:10])
+# Can you also calculate the cumulative explained variance of the first 3 axes?
+
+# Some distance measures may result in negative eigenvalues. In that case, add a correction:
+PCOA <- pcoa(dist, correction = "cailliez")
+
+# Plot your results
+biplot.pcoa(PCOA)
+
+# You see what`s missing? 
+# Indeed, there are no species plotted on this biplot. 
+# That's because we used a dissimilarity matrix (sites x sites) 
+# as input for the PCOA function. 
+# Hence, no species scores could be calculated. 
+# However, we could work around this problem like this:
+# biplot.pcoa(PCOA, asv.data.t)
+
+#--------------------------------------------------------------------------------
+# Extract the plot scores from first two PCoA axes (if you need them):
+PCOAaxes <- PCOA$vectors[,c(1,2)]
+
+# Compare this result with the PCA plot
+par(mfrow = c(1, 2)) 
+biplot.pcoa(PCOA)
+plot(PCA)
+
+# reset plot window
+par(mfrow = c(1, 1)) 
+
+#--------------------------------------------------------------------------------
+# First step is to calculate a distance matrix. See PCOA for more information about the distance measures
+# Here we use bray-curtis distance, which is recommended for abundance data
+dist <- vegdist(asv.data.t,  method = "bray")
+
+# In this part, we define a function NMDS.scree() that automatically 
+# performs a NMDS for 1-10 dimensions and plots the nr of dimensions vs the stress
+NMDS.scree <- function(x) { #where x is the name of the data frame variable
+  plot(rep(1, 10), replicate(10, metaMDS(x, autotransform = F, k = 1)$stress), xlim = c(1, 10),ylim = c(0, 0.30), xlab = "# of Dimensions", ylab = "Stress", main = "NMDS stress plot")
+  for (i in 1:10) {
+    points(rep(i + 1,10),replicate(10, metaMDS(x, autotransform = F, k = i + 1)$stress))
+  }
+}
+
+# Use the function that we just defined to choose the optimal nr of dimensions
+NMDS.scree(dist)
+
+#--------------------------------------------------------------------------------
+# Because the final result depends on the initial 
+# random placement of the points 
+# we`ll set a seed to make the results reproducible
+set.seed(2)
+
+# Here, we perform the final analysis and check the result
+NMDS1 <- metaMDS(dist, k = 2, trymax = 100, trace = F)
+# Do you know what the trymax = 100 and trace = F means?
+# Let's check the results
+NMDS1
+
+# If you don`t provide a dissimilarity matrix, metaMDS automatically applies Bray-Curtis. So in our case, the results would have to be the same
+NMDS2 <- metaMDS(asv.data.t, k = 2, trymax = 100, trace = F)
+NMDS2
+
+stressplot(NMDS1)
+plot(NMDS1, type = "t")
+
+NMDS3 <- metaMDS(asv.data.t, k = 2, trymax = 100, trace = F, autotransform = FALSE, distance="bray")
+plot(NMDS3)
+plot(NMDS3, display = "sites", type = "n")
+points(NMDS3, display = "sites", col = "red", cex = 1.25)
+text(NMDS3, display ="species")
+
+# Alternatively, you can use the functions ordiplot and orditorp
+ordiplot(NMDS3, type = "n")
+orditorp(NMDS3, display = "species", col = "red", air = 0.01)
+orditorp(NMDS3, display = "sites", cex = 1.1, air = 0.01)
+#--------------------------------------------------------------------------------
+
+# Load the second dataset
+data(chem.data.cca)
+
+# The function envfit will add the environmental variables as vectors to the ordination plot
+ef <- envfit(NMDS3, chem.data.cca, permu = 999)
+ef
+
+# The two last columns are of interest: the squared correlation coefficient and the associated p-value
+# Plot the vectors of the significant correlations and interpret the plot
+plot(NMDS3, type = "t", display = "sites")
+plot(ef, p.max = 0.05)
+
+#--------------------------------------------------------------------------------
+# Define a group variable (first 8 samples belong to group 1, last 8 samples to group 2)
+group = c(rep("Group1", 8), rep("Group2", 8))
+
+# Create a vector of color values with same length as the vector of group values
+colors = c(rep("red", 8), rep("blue", 8))
+
+# Plot convex hulls with colors based on the group identity
+ordiplot(NMDS3, type = "n")
+for(i in unique(group)) {
+  ordihull(NMDS3$point[grep(i, group),], draw="polygon",
+   groups = group[group == i],col = colors[grep(i,group)],label=F) } 
+
+orditorp(NMDS3, display = "species", col = "red", air = 0.01)
+orditorp(NMDS3, display = "sites", col = c(rep("red",8),
+  rep("blue", 8)), air = 0.01, cex = 1.25)
+
+
+```
+
+PEARSON CORRELATION
+
+```{r}
+#http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software
+
+#load data
+setwd("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Abiotic_Data")
+
+abiotic <- read.delim(file.choose())
+#make row names
+abiotic2 <- abiotic[,-1]
+rownames(abiotic2) <- abiotic[,1]
+
+#remove extra columns
+abiotic3 <- subset(abiotic2, select = -c(site,type))  
+
+#compute correlation matrix
+res <- cor(abiotic3)
+round(res, 2)
+
+cor(abiotic3, use = "complete.obs")
+
+require(corrplot)
+rcorr(res, type = c("pearson","spearman"))
+
+#install.packages("Hmisc")
+library("Hmisc")
+res2 <- rcorr(as.matrix(abiotic3))
+res2
+
+# Extract the correlation coefficients
+res2$r
+# Extract p-values
+res2$P
+
+# ++++++++++++++++++++++++++++
+# flattenCorrMatrix
+# ++++++++++++++++++++++++++++
+# cormat : matrix of the correlation coefficients
+# pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+library(Hmisc)
+
+res2<-rcorr(as.matrix(abiotic3))
+flattenCorrMatrix(res2$r, res2$P)
+
+
+symnum(x, cutpoints = c(0.3, 0.6, 0.8, 0.9, 0.95),
+       symbols = c(" ", ".", ",", "+", "*", "B"),
+       abbr.colnames = TRUE)
+
+symnum(res, abbr.colnames = FALSE)
+
+install.packages("corrplot")
+
+library(corrplot)
+corrplot(res, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+
+# Insignificant correlation are crossed
+corrplot(res2$r, type="upper", order="hclust", 
+         p.mat = res2$P, sig.level = 0.01, insig = "pch")
+
+# Insignificant correlations are leaved blank
+corrplot(res2$r, type="upper", order="hclust", 
+         p.mat = res2$P, sig.level = 0.01, insig = "blank")
+
+install.packages("PerformanceAnalytics")
+
+library("PerformanceAnalytics")
+#my_data <- mtcars[, c(1,3,4,5,6,7)]
+chart.Correlation(abiotic3, histogram=TRUE, pch=19)
+
+# Get some colors
+col<- colorRampPalette(c("blue", "white", "red"))(20)
+heatmap(x = res, col = col, symm = TRUE)
+
+#------------------------------------------------------------------
+#correlation matrix including assembly processes
+AP_corr <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/correlation.csv", 
+                  header = TRUE, 
+           sep = ",",
+           dec = ".")
+
+#remove extra columns and make row names the header
+AP_corr <- AP_corr[,-2]
+AP_corr <- AP_corr[,-2]
+rownames(AP_corr) <- AP_corr[,1]
+AP_corr <- AP_corr[,-1]
+
+#compute correlation matrix
+res <- cor(AP_corr)
+round(res, 2)
+
+cor(AP_corr, use = "complete.obs")
+
+rcorr(res, type = c("pearson","spearman"))
+
+#install.packages("Hmisc")
+library("Hmisc")
+res2 <- rcorr(as.matrix(AP_corr))
+res2
+
+# Extract the correlation coefficients
+res2$r
+# Extract p-values
+res2$P
+
+#deal with NAs
+
+
+# ++++++++++++++++++++++++++++
+# flattenCorrMatrix
+# ++++++++++++++++++++++++++++
+# cormat : matrix of the correlation coefficients
+# pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+library(Hmisc)
+flattenCorrMatrix(res2$r, res2$P)
+
+#visualize correlation matrix
+symnum(res, abbr.colnames = FALSE)
+
+#create correlogram
+corrplot(res, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45, 
+        # addCoef.col = 'grey' 
+         )
+
+
+#THIS ISNT WORKING 
+# Insignificant correlation are crossed out
+corrplot(res2$r, type="upper", order="hclust", 
+         p.mat = res2$P, sig.level = 0.01, insig = "blank")
+
+# Insignificant correlations are left blank
+corrplot(res2$r, type="upper", order="hclust", 
+         p.mat = res2$P, sig.level = 0.01, insig = "blank")
+
+```
+
+qPCR BAR PLOT -
+
+```{r dev = c("png", "jpg", "pdf")}
+#qPCR FIGURES FOR SUPPLEMENTAL INFORMATION
+#see: http://www.sthda.com/english/wiki/ggplot2-error-bars-quick-start-guide-r-software-and-data-visualization
+
+#load ggplot
+library(ggplot2)
+library(scales)
+
+#load data
+qPCR_long <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Raw_Data/qPCR/qPCR_long.csv", 
+                  header = TRUE, 
+           sep = ",",
+           dec = ".")
+str(qPCR_long)
+
+#add pseudocount to whole matrix before log transformation
+qPCR_long[,4] <- qPCR_long[,4] + 1
+
+#reorder genes
+qPCR_long$gene <- factor(qPCR_long$gene, levels = c("bac16S" ,"arc16S" ,"ITS", "AOB", "AOA", "NS16S", "nxrA", "hzsB", "ds.bac16S" ,"ds.arc16S" ,"ds.ITS", "ds.AOB", "ds.AOA", "ds.NS16S", "ds.nxrA", "ds.hzsB" ))
+
+#reorder stages "type"
+qPCR_long$type <- factor(qPCR_long$type, levels = c("Heap" ,"Initial" ,"Biocrust"))
+
+#remove nxrA and hzsB
+# qPCR_long[qPCR_long2$gene != "hzsB" & qPCR_long$gene != "nxrA", ]
+
+
+#remove all (!=) N cycling genes 
+qPCR_long2 <- subset(qPCR_long,
+                     qPCR_long$gene != "ds.bac16S" & 
+                     qPCR_long$gene != "ds.arc16S" &
+                     qPCR_long$gene != "ds.ITS" & 
+                     qPCR_long$gene != "ds.AOA" & 
+                     qPCR_long$gene != "ds.AOB" &
+                     qPCR_long$gene != "ds.NS16S" & 
+                     qPCR_long$gene != "ds.nxrA"  & 
+                     qPCR_long$gene != "ds.hzsB"  & 
+                    # qPCR_long$gene != "bac16S" & 
+                    # qPCR_long$gene != "arc16S" &
+                     qPCR_long$gene != "ITS"  &
+                     qPCR_long$gene != "hzsB" &
+                     qPCR_long$gene != "AOA" & 
+                     qPCR_long$gene != "AOB" &
+                     qPCR_long$gene != "NS16S" &
+                     qPCR_long$gene != "nxrA" &
+                     qPCR_long$gene != "hzsB" 
+                     )
+
+#rename headers
+qPCR_long2$gene <- factor(qPCR_long2$gene, levels = c("bac16S","arc16S" ),
+                     labels = c ("Bacterial 16S", "Archaeal 16S"))
+
+#plot copies/ng DNA for all bac, arc
+q1 <- ggplot(qPCR_long2, aes(x=type, y=copies, fill = site)) +
+  geom_bar(stat="identity", color="black", 
+           position=position_dodge()) +
+  scale_y_log10(labels = scales::scientific) + #log scale, scientific notation
+  geom_errorbar(aes(ymin = copies, ymax = copies+sd), width = 0.2, #keep only upper error bars
+  position=position_dodge(.9)) +
+  labs(x = "", y = "copies ng-1 DNA") + 
+  scale_x_discrete(labels = new_type) +
+  theme_classic() + 
+ #increase text size
+  theme(text = element_text(size = 20)) +
+  facet_wrap(~ gene) +
+  #change barplot colors
+  scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black")) 
+
+#plot copies/ g dry soil for bac, arc
+
+#remove all (!=) N cycling genes 
+qPCR_long3 <- subset(qPCR_long,
+                    # qPCR_long$gene != "ds.bac16S" & 
+                    # qPCR_long$gene != "ds.arc16S" &
+                     qPCR_long$gene != "ds.ITS" & 
+                     qPCR_long$gene != "ds.AOA" & 
+                     qPCR_long$gene != "ds.AOB" &
+                     qPCR_long$gene != "ds.NS16S" & 
+                     qPCR_long$gene != "ds.nxrA"  & 
+                     qPCR_long$gene != "ds.hzsB"  & 
+                     qPCR_long$gene != "bac16S" & 
+                     qPCR_long$gene != "arc16S" &
+                     qPCR_long$gene != "ITS"  &
+                     qPCR_long$gene != "hzsB" &
+                     qPCR_long$gene != "AOA" & 
+                     qPCR_long$gene != "AOB" &
+                     qPCR_long$gene != "NS16S" &
+                     qPCR_long$gene != "nxrA" &
+                     qPCR_long$gene != "hzsB" 
+                     )
+#rename headers
+qPCR_long3$gene <- factor(qPCR_long3$gene, levels = c("ds.bac16S","ds.arc16S" ),
+                     labels = c ("Bacterial 16S", "Archaeal 16S"))
+
+ q2 <- ggplot(qPCR_long3, aes(x=type, y=copies, fill = site)) +
+  geom_bar(stat="identity", color="black", 
+           position=position_dodge()) +
+  scale_y_log10(labels = scales::scientific) + #log scale, scientific notation
+  geom_errorbar(aes(ymin = copies, ymax = copies+sd), width = 0.2, #keep only upper error bars
+  position=position_dodge(.9)) +
+  labs(x = "", y = "copies g-1 dry soil") + 
+  theme_classic() + 
+   #increase text size
+  theme(text = element_text(size = 20)) +
+   #scale_y_continuous(trans=scales::pseudo_log_trans(base = 10) +
+  #scale_y_continuous(labels = scales::scientific) + #scientific notation
+  #facet_wrap(~ gene, scales = "free")
+  scale_x_discrete(labels = new_type) +
+  facet_wrap(~ gene) +
+  #change barplot colors
+  scale_fill_manual(values = c("OD" = "lightgrey",
+                               "WT" = "black")) 
+ 
+#assemble plots together
+library(ggpubr)
+qPCR_plots <- ggarrange(q1, q2, 
+          labels = c("A.", "B."),
+          label.y = 0.07,
+          label.x = 0.05,
+          nrow = 2,
+          font.label = list(size = 18),
+         common.legend = TRUE, legend = "right")
+
+qPCR_plots 
+ 
+```
+
+qPCR STATISTICAL ANALYSIS - edited on 4/19/22
+
+```{r dev = c("png", "jpg", "pdf")}
+
+qPCR_wide <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Raw_Data/qPCR/qPCR_wide.csv", 
+                  header = TRUE, 
+           sep = ",",
+           dec = ".")
+
+summary(qPCR_wide)
+
+#reorder
+qPCR_wide$type <- factor(qPCR_wide$type, levels =c("heap","initial", "biocrust"))
+
+boxplot(bac_16S ~ sampl, data = qPCR_wide, 
+        ylab = "bacterial 16S", xlab = "sample")
+
+#Because you only have 3 observations per sample (n=3), then do:
+
+#Welch one-way test = ANOVA test with no assumption of equal variances 
+#ON SAMPLE 
+oneway.test(bac_16S ~ sampl, data = qPCR_wide)
+oneway.test(arc_16S ~ sampl, data = qPCR_wide)
+oneway.test(ITS ~ sampl, data = qPCR_wide)
+oneway.test(NS_16S ~ sampl, data = qPCR_wide)
+oneway.test(AOA ~ sampl, data = qPCR_wide)
+oneway.test(AOB ~ sampl, data = qPCR_wide)
+oneway.test(nxrA ~ sampl, data = qPCR_wide)
+oneway.test(hzsB ~ sampl, data = qPCR_wide)
+
+#ON TYPE
+oneway.test(bac_16S ~ type, data = qPCR_wide)
+oneway.test(arc_16S ~ type, data = qPCR_wide)
+oneway.test(ITS ~ type, data = qPCR_wide)
+oneway.test(NS_16S ~ type, data = qPCR_wide)
+oneway.test(AOA ~ type, data = qPCR_wide)
+oneway.test(AOB ~ type, data = qPCR_wide)
+oneway.test(nxrA ~ type, data = qPCR_wide)
+oneway.test(hzsB ~ type, data = qPCR_wide)
+
+#ON SITE LOCATION
+oneway.test(bac_16S ~ site, data = qPCR_wide)
+oneway.test(arc_16S ~ site, data = qPCR_wide)
+oneway.test(ITS ~ site, data = qPCR_wide)
+oneway.test(NS_16S ~ site, data = qPCR_wide)
+oneway.test(AOA ~ site, data = qPCR_wide)
+oneway.test(AOB ~ site, data = qPCR_wide)
+oneway.test(nxrA ~ site, data = qPCR_wide)
+oneway.test(hzsB ~ site, data = qPCR_wide)
+
+
+#Pairwise t-tests with no assumption of equal variances with bonferroni correction
+#Note: because there are only 2 sites, then you do not need to do any pairwise comparison testing because the previous Welchs test does that for you - outputs the same values.
+
+#Pairwise t-tests ON SAMPLE TYPE----------------------
+pairwise.t.test(qPCR_wide$bac_16S, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+pairwise.t.test(qPCR_wide$arc_16S, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+#output t.test to dataframe
+test <- pairwise.t.test(qPCR_wide$bac_16S, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+write.table(test[["p.value"]], file="t_test_bac_16S.csv", sep=",")
+
+test2 <- pairwise.t.test(qPCR_wide$arc_16S, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+write.table(test2[["p.value"]], file="t_test_arc_16S.csv", sep=",")
+
+test3 <- pairwise.t.test(qPCR_wide$ITS, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+write.table(test2[["p.value"]], file="t_test_ITS.csv", sep=",")
+
+test4 <- pairwise.t.test(qPCR_wide$NS_16S, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+write.table(test2[["p.value"]], file="t_test_NS_16S.csv", sep=",")
+
+test5 <- pairwise.t.test(qPCR_wide$AOA, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+write.table(test2[["p.value"]], file="t_test_AOA.csv", sep=",")
+
+test6 <- pairwise.t.test(qPCR_wide$AOB, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+write.table(test2[["p.value"]], file="t_test_AOB.csv", sep=",")
+
+test7 <- pairwise.t.test(qPCR_wide$nxrA, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+write.table(test2[["p.value"]], file="t_test_nxrA-.csv", sep=",")
+
+test8 <- pairwise.t.test(qPCR_wide$hzsB, qPCR_wide$sampl,
+                 p.adjust.method = "bonferroni", pool.sd = FALSE)
+
+write.table(test2[["p.value"]], file="t_test_hzsB.csv", sep=",")
+ 
+
+#by site
+kruskal.test(bac_16S ~ site , data = qPCR_wide)
+kruskal.test(arc_16S ~ site , data = qPCR_wide)
+kruskal.test(ITS ~ site , data = qPCR_wide)
+kruskal.test(NS_16S ~ site , data = qPCR_wide)
+kruskal.test(AOA ~ site , data = qPCR_wide)
+kruskal.test(AOB ~ site , data = qPCR_wide)
+kruskal.test(nxrA ~ site , data = qPCR_wide)
+kruskal.test(hzsB ~ site , data = qPCR_wide)
+
+```
+
+BETA NTI STEGEN 2013 - edited on 8/1/22
+
+```{r}
+#see https://github.com/stegen/Stegen_etal_ISME_2013/blob/master/bNTI_Local_Machine.r for instructions
+#I THINK THIS IS "PHYLOGENETIC SIGNAL"
+#make a phylo tree object OR get from ROB this is the "phytted" object loaded into the local environment
+
+#load package for Beta NTI
+library("picante") #version 1.8.2
+
+## read in OTU/ASV table
+#this was originally in the code but I already loaded in the ASV table so it should be fine 
+#otu = read.csv("bacteria-abundance of OTU.csv",header=T,row.names=1); 
+#otu = asv.data
+#dim(otu); # this gives the dimensions
+#otu[1:5,1:5]; # this gives a look at the first 5 rows and columns
+
+#read in otu table from phyloseq object 
+otu = otu_table(phytted)
+
+## read in the phylogeny
+phylo = phy_tree(phytted);
+phylo; # a summary of the phylogeny
+#plot.phylo(phylo,typ="fan"); # a quick plot
+
+## make sure the names on the phylogeny are ordered the same as the names in otu table
+match.phylo.otu = match.phylo.data(phylo, otu);
+str(match.phylo.otu);
+
+## calculate empirical betaMNTD
+beta.mntd.weighted = as.matrix(comdistnt(t(match.phylo.otu$data),cophenetic(match.phylo.otu$phy),abundance.weighted=T));
+dim(beta.mntd.weighted);
+beta.mntd.weighted[1:5,1:5];
+write.csv(beta.mntd.weighted,'betaMNTD_weighted.csv',quote=F);
+
+identical(colnames(match.phylo.otu$data),colnames(beta.mntd.weighted)); # just a check, should be TRUE
+identical(colnames(match.phylo.otu$data),rownames(beta.mntd.weighted)); # just a check, should be TRUE
+
+#8/1/22 YOU ARE HERE 
+
+# calculate randomized betaMNTD
+beta.reps = 999; # number of randomizations
+
+rand.weighted.bMNTD.comp = array(c(-999),dim=c(ncol(match.phylo.otu$data),ncol(match.phylo.otu$data),beta.reps));
+dim(rand.weighted.bMNTD.comp);
+
+
+for (rep in 1:beta.reps) {
+  
+  rand.weighted.bMNTD.comp[,,rep] = as.matrix(comdistnt(t(match.phylo.otu$data),taxaShuffle(cophenetic(match.phylo.otu$phy)),abundance.weighted=T,exclude.conspecifics = F));
+  
+  print(c(date(),rep));
+  
+}
+
+weighted.bNTI = matrix(c(NA),nrow=ncol(match.phylo.otu$data),ncol=ncol(match.phylo.otu$data));
+dim(weighted.bNTI);
+
+for (columns in 1:(ncol(match.phylo.otu$data)-1)) {
+  for (rows in (columns+1):ncol(match.phylo.otu$data)) {
+    
+    rand.vals = rand.weighted.bMNTD.comp[rows,columns,];
+    weighted.bNTI[rows,columns] = (beta.mntd.weighted[rows,columns] - mean(rand.vals)) / sd(rand.vals);
+    rm("rand.vals");
+    
+  };
+};
+
+rownames(weighted.bNTI) = colnames(match.phylo.otu$data);
+colnames(weighted.bNTI) = colnames(match.phylo.otu$data);
+weighted.bNTI;
+write.csv(weighted.bNTI,"weighted_bNTI.csv",quote=F);
+
+pdf("weighted_bNTI_Histogram.pdf")
+  hist(weighted.bNTI)
+dev.off()
+
+```
+
+"Raup-Crick Abundance" STEGEN 2013 - edited by Rob - he changed the code
+inside the function ran function (99 reps) on 8/3/22, ran function on
+Oct/23/22
+
+```{r}
+#https://github.com/stegen/Stegen_etal_ISME_2013/blob/master/Raup_Crick_Abundance.r
+#CHECK THE METADATA BECAUSE YOU ARE MISSING A SAMPLE IN THE RESULT! ALSO, THE RESULT DOESNT SHOW UP AS A DATAFRAME IN R, SO I JUST COPY PASTED FROMT HE CONSOLE 8/4/22
+
+#spXsite = as.data.frame(otu)
+spXsite = as.data.frame(t(otu)) #make sure you have row names for plots (Sample names)
+
+#here I changed the plot_names_in_col1 to FALSE
+raup_crick_abundance = function(spXsite, plot_names_in_col1=FALSE, classic_metric=FALSE, split_ties=TRUE, reps=999, set_all_species_equal=FALSE, as.distance.matrix=TRUE, report_similarity=FALSE){
+	
+	##expects a species by site matrix for spXsite, with row names for plots, or optionally plots named in column 1.  By default calculates a modification of the Raup-Crick metric (standardizing the metric to range from -1 to 1 instead of 0 to 1). Specifying classic_metric=TRUE instead calculates the original Raup-Crick metric that ranges from 0 to 1. The option split_ties (defaults to TRUE) adds half of the number of nuresultsll observations that are equal to the observed number of shared species to the calculation- this is highly recommended.  The argument report_similarity defaults to FALSE so the function reports a dissimilarity (which is appropriate as a measure of beta diversity).  Setting report_similarity=TRUE returns a measure of similarity, as Raup and Crick originally specified.  If ties are split (as we recommend) the dissimilarity (default) and similarity (set report_similarity=TRUE) calculations can be flipped by multiplying by -1 (for our modification, which ranges from -1 to 1) or by subtracting the metric from 1 (for the classic metric which ranges from 0 to 1). If ties are not split (and there are ties between the observed and expected shared number of species) this conversion will not work. The argument reps specifies the number of randomizations (a minimum of 999 is recommended- default is 9999).  set_all_species_equal weights all species equally in the null model instead of weighting species by frequency of occupancy.  
+	
+	
+	##Note that the choice of how many plots (rows) to include has a real impact on the metric, as species and their occurrence frequencies across the set of plots is used to determine gamma and the frequency with which each species is drawn from the null model	
+	
+	
+	##this section moves plot names in column 1 (if specified as being present) into the row names of the matrix and drops the column of names
+	if(plot_names_in_col1){
+		row.names(spXsite)<-spXsite[,1]
+		spXsite<-spXsite[,-1]
+		}
+	
+	
+	## count number of sites and total species richness across all plots (gamma)
+	n_sites<-nrow(spXsite)
+	gamma<-ncol(spXsite)
+
+	##build a site by site matrix for the results, with the names of the sites in the row and col names:
+	results<-matrix(data=NA, nrow=n_sites, ncol=n_sites, dimnames=list(row.names(spXsite), row.names(spXsite)))
+	
+	##make the spXsite matrix into a new, pres/abs. matrix:
+	ceiling(spXsite/max(spXsite))->spXsite.inc
+	
+	##create an occurrence vector- used to give more weight to widely distributed species in the null model:
+	occur<-apply(spXsite.inc, MARGIN=2, FUN=sum)
+	
+	##create an abundance vector- used to give more weight to abundant species in the second step of the null model:
+	abundance<-apply(spXsite, MARGIN=2, FUN=sum)
+	
+	##make_null:
+	##looping over each pairwise community combination:
+	
+	for(null.one in 1:(nrow(spXsite)-1)){
+		for(null.two in (null.one+1):nrow(spXsite)){
+			
+			null_bray_curtis<-NULL
+			for(i in 1:reps){
+				
+				##two empty null communities of size gamma:
+				com1<-rep(0,gamma)
+				com2<-rep(0,gamma)
+				
+				##add observed number of species to com1, weighting by species occurrence frequencies:
+				com1[sample(1:gamma, sum(spXsite.inc[null.one,]), replace=FALSE, prob=occur)]<-1
+				com1.samp.sp = sample(which(com1>0),(sum(spXsite[null.one,])-sum(com1)),replace=TRUE,prob=abundance[which(com1>0)]);
+				com1.samp.sp = cbind(com1.samp.sp,1); # head(com1.samp.sp);
+				com1.sp.counts = as.data.frame(tapply(com1.samp.sp[,2],com1.samp.sp[,1],FUN=sum)); colnames(com1.sp.counts) = 'counts'; # head(com1.sp.counts);
+				com1.sp.counts$sp = as.numeric(rownames(com1.sp.counts)); # head(com1.sp.counts);
+				com1[com1.sp.counts$sp] = com1[com1.sp.counts$sp] + com1.sp.counts$counts; # com1;
+				#sum(com1) - sum(spXsite[null.one,]); ## this should be zero if everything work properly
+				rm('com1.samp.sp','com1.sp.counts');			
+				
+				##same for com2:
+				com2[sample(1:gamma, sum(spXsite.inc[null.two,]), replace=FALSE, prob=occur)]<-1
+				com2.samp.sp = sample(which(com2>0),(sum(spXsite[null.two,])-sum(com2)),replace=TRUE,prob=abundance[which(com2>0)]);
+				com2.samp.sp = cbind(com2.samp.sp,1); # head(com2.samp.sp);
+				com2.sp.counts = as.data.frame(tapply(com2.samp.sp[,2],com2.samp.sp[,1],FUN=sum)); colnames(com2.sp.counts) = 'counts'; # head(com2.sp.counts);
+				com2.sp.counts$sp = as.numeric(rownames(com2.sp.counts)); # head(com2.sp.counts);
+				com2[com2.sp.counts$sp] = com2[com2.sp.counts$sp] + com2.sp.counts$counts; # com2;
+				# sum(com2) - sum(spXsite[null.two,]); ## this should be zero if everything work properly
+				rm('com2.samp.sp','com2.sp.counts');
+
+				null.spXsite = rbind(com1,com2); # null.spXsite;
+				
+				##calculate null bray curtis
+				null_bray_curtis[i] = vegdist(null.spXsite,method='bray');
+				
+			}; # end reps loop
+
+			## empirically observed bray curtis
+			obs.bray = vegdist(spXsite[c(null.one,null.two),],method='bray');
+
+			##how many null observations is the observed value tied with?
+			num_exact_matching_in_null = sum(null_bray_curtis==obs.bray);
+			
+			##how many null values are smaller than the observed *dissimilarity*?
+			num_less_than_in_null = sum(null_bray_curtis<obs.bray);
+			
+			rc = (num_less_than_in_null )/reps; # rc;
+			
+			if(split_ties){
+				
+				rc = ((num_less_than_in_null +(num_exact_matching_in_null)/2)/reps)
+			};
+			
+			
+			if(!classic_metric){
+					
+					##our modification of raup crick standardizes the metric to range from -1 to 1 instead of 0 to 1
+					
+					rc = (rc-.5)*2
+			};
+
+			results[null.two,null.one] = round(rc,digits=2); ##store the metric in the results matrix
+			
+			print(c(null.one,null.two,date()));
+			
+		}; ## end null.two loop
+		
+	}; ## end null.one loop
+	
+	if(as.distance.matrix){ ## return as distance matrix if so desired
+		results<-as.dist(results)
+	}	
+	
+return(results)
+
+}; ## end function
+
+
+#then run the function
+raup_crick_abundance(spXsite)
+
+```
+
+Yuri's method for NTI - worked on OCt/1/2022 and Oct/22/22 (999
+permutations) Date: July 19, 2022
+
+```{r}
+# code is from Yuri Pinero
+#reference tutorial https://pedrohbraga.github.io/CommunityPhylogenetics-Workshop/CommunityPhylogenetics-Workshop.html
+
+## change to the directory on your computer that contains the OTU table and phylogeny
+## note that the 'slash' needs to be changed to a forward slash like this /
+
+#setwd("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI")
+
+## load this library
+## if not already installed, use install.packages('picante')
+library(picante)
+library(readxl)
+library(writexl)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(ggpubr)
+
+# #tutorial ------------------------------------------------------------------------------------------
+# data(phylocom)
+# names(phylocom)
+# 
+# phy <- phylocom$phylo
+# comm <- phylocom$sample
+# traits <- phylocom$traits
+# 
+# phy
+# comm
+# 
+# class(comm)
+# colnames(comm)
+# rownames(comm)
+# head(traits)
+# 
+# traitA <- df2vec(traits, "traitA")
+# traitA
+# 
+# prunedphy <- prune.sample(comm, phy)
+# prunedphy
+# 
+# par(mfrow = c(2, 3))
+# for (i in row.names(comm)) {
+# plot(prunedphy, show.tip.label = FALSE, main = i)
+# tiplabels(tip = which(prunedphy$tip.label %in% names(which(comm[i, ] >
+# 0))), pch = 19, cex = 2)
+# }
+# 
+# par(mfrow = c(2, 2))
+# for (i in names(traits)) {
+# plot(phy, show.tip.label = FALSE, main = i)
+# tiplabels(pch = 22, col = traits[, i] + 1, bg = traits[, i] + 1, cex = 1.5)
+# }
+# 
+# pd.result <- pd(comm, phy, include.root = TRUE)
+# pd.result
+# 
+# phydist <- cophenetic(phy)
+# ses.mpd.result <- ses.mpd(comm, phydist, null.model = "taxa.labels",
+# abundance.weighted = FALSE, runs = 99)
+# ses.mpd.result
+# 
+# ses.mntd.result <- ses.mntd(comm, phydist, null.model = "taxa.labels",
+# abundance.weighted = FALSE, runs = 99)
+# ses.mntd.result
+# 
+# comdist.result <- comdist(comm, phydist)
+# 
+# comdist.result
+# library(cluster)
+# comdist.clusters <- hclust(comdist.result)
+# plot(comdist.clusters)
+# 
+# traits <- traits[phy$tip.label, ]
+# multiPhylosignal(traits, phy)
+
+#---------------------------------------------------------------------------------------------------
+
+## load phyloseq object from workspace
+load("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/36.RData")
+
+#make community matrix - see https://github.com/joey711/phyloseq/issues/613
+otu <- as(otu_table(phytted), "matrix")
+# transpose if necessary
+if(taxa_are_rows(phytted)){otu <- t(otu)}
+# Coerce to data.frame
+otu = as.data.frame(otu)
+
+### Read tree
+phylo = read.tree("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/Juliette.nwk");
+phylo; # a summary of the phylogeny
+plot.phylo(phylo,typ="fan"); # a quick plot
+
+
+match.phylo.otu = match.phylo.data(phylo, otu %>% t) 
+str(match.phylo.otu)
+
+#make sure to transpose the otu table if the warning message as.null shows up
+pd.result <- pd(otu, phylo, include.root=TRUE)
+pd.result
+
+match.phylo.otu.test = match.phylo.data(phylo, otu %>% t)
+prunedphy <- prune.sample(otu, phylo)
+prunedphy
+pd.result <- pd(otu, phylo, include.root=TRUE)
+pd.result
+
+###MPD, MNTD, SESMPD and SESMNTD 
+phydist = cophenetic(phylo)
+set.seed(1)
+ses.mpd.result = ses.mpd(otu, phydist, null.model= "taxa.labels", abundance.weighted=T, runs=999)
+ses.mpd.result
+
+
+write.csv(x = ses.mpd.result, file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/MPD_999.csv", row.names = TRUE)
+
+ses.mntd.result <- ses.mntd(otu, phydist, null.model="taxa.labels", abundance.weighted=T, runs=999)
+ses.mntd.result
+
+write.csv(x = ses.mntd.result, file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/MNTD_999.csv", row.names = TRUE)
+
+
+### Phylogenetic beta diversity
+comdist.result <- comdist(otu, phydist)
+comdist.result
+comdist.result.matrix <- as.matrix(comdist.result) #this is my modification
+
+write.csv(x = comdist.result.matrix, file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/Phylogenetic_beta_diversity_999.csv", row.names = TRUE)
+
+
+comdist.clusters <- hclust(comdist.result)
+plot(comdist.clusters)
+
+##### Calculate NTI 
+#from https://pedrohbraga.github.io/CommunityPhylogenetics-Workshop/CommunityPhylogenetics-Workshop.html#nearest-taxon-index-nti
+
+NTI <- as.matrix(-1 * ((ses.mntd.result[,2] - ses.mntd.result[,3]) / 
+                                   ses.mntd.result[,4]))
+rownames(NTI) <- row.names(ses.mntd.result)
+colnames(NTI) <- "NTI"
+
+head(NTI)
+
+NTI
+NTI.data=as.data.frame(NTI)
+write.csv(x = NTI, file = "D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/NTI_999.csv", row.names = TRUE)
+
+#write.csv(NTI, file = "NTI", row.names = TRUE)
+#write.table(NTI, file = "NTI.txt", sep = " ")
+
+
+#YOU ARE HERE -----------------------------------------------------------------------------------
+### Ploting ###
+# #this is reading a preexisting file
+# NTI_plot <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/NTI_plot.csv", header = TRUE)
+# 
+# View(NTI_plot)
+# 
+# #NTI_plot=NTI_plot[-32,]
+# #colnames(NTI_plot)= c("site", "type", "NTI")
+# 
+# NTI_ploth=NTI_plot
+# 
+# NTI_ploth.m=aggregate(NTI_ploth[, 3], list(NTI_ploth$type, NTI_ploth$site ), mean)
+# 
+# NTI_ploth.dev=aggregate(NTI_ploth[, 3], list(NTI_ploth$Time, NTI_ploth$Dilution ), sd)
+# colnames(NTI_ploth.m)= c("Time", "Dilution", "NTI")
+# levels(NTI_ploth.m$Dilution)
+# #NTI_ploth.m$Dilution <- factor(NTI_ploth.m$Dilution, levels = c("Original", "1:10", "1:50", "1:100", "Sterile"))
+# plot.NTI_ploth<- ggplot(NTI_ploth.m, aes(Time, NTI, ymin = NTI-NTI_ploth.dev$NTI, ymax = NTI+NTI_ploth.dev$NTI, group_by(Dilution), color = Dilution, width=0.4))
+# .NTI_ploth=plot.NTI_ploth + geom_pointrange(size=0.8, position=position_dodge(width=0.30)) + theme_minimal() + scale_color_manual(values = c("#FF6600", "#000000", "#666666", "#999999", "#00CC00")) 
+# NTI_ploth.f=.NTI_ploth + ylab("Nearest taxon index") + xlab("Time in Weeks") + geom_hline(yintercept=2, linetype="dashed", color = "red", size=1) + ggtitle("Beta NTI measuraments")
+# NTI_ploth.f 
+# 
+# ### Statistical Tests ###
+# 
+# #ANOVA
+# 
+# #Normality test
+# 
+# shapiro.test(NTI_ploth.m$NTI)
+# 
+# #Bacteria
+# NTI.aov <- aov(NTI~Dilution + Time, data = NTI_ploth)
+# summary(NTI.aov)
+# TukeyHSD(NTI.aov)
+# NTI.qq=ggqqplot(residuals(NTI.aov)) + labs(title = "NTI")
+# NTI.qq
+# 
+
+```
+
+plotting figures for Community Assembly analysis and Beta-NTI
+
+```{r}
+#Make a percent stacked barplot
+
+library(ggplot2)
+
+#load dataset
+com_ass_df <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/com_ass.csv", 
+                  header = TRUE, 
+           sep = ",",
+           dec = ".")
+
+#order the site names
+com_ass_df$label <- factor(com_ass_df$label, levels =c("OD heap","OD initial", "OD biocrust", "WT heap", "WT initial", "WT biocrust"))
+
+#order the Community Processes
+com_ass_df$process <- factor(com_ass_df$process, levels = c("Undominated", "Homogenizing dispersal","Dispersal limitation", "Homogenizing selection", "Variable selection"))
+
+#then plot
+comm_ass_plot <- ggplot(com_ass_df, aes(x = label, y = perc_site_pairs, fill = process)) + 
+  geom_bar(stat = "identity", color = "black") +
+  #change colors 
+  scale_fill_manual(values = c("Undominated" = "snow",
+                               "Homogenizing dispersal" = "gray80",
+                               "Dispersal limitation" = "gray55",
+                               "Homogenizing selection" = "sandybrown",
+                               "Variable selection" = "palegreen4")) +
+  #axis labels
+  xlab ("site") + ylab ("Percent of site pairs") +
+  #legend customization
+  guides(fill = guide_legend(title = "Assembly Process")
+  )
+
+#make the text size good
+comm_ass_plot +   
+  #increase font size overall
+  #theme(text = element_text(size = 20))
+  #only change axis titles 
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20))   
+
+
+#save it
+#----------------------------------------------------------------------------------------
+
+#make a box and whisker plot for beta NTI 
+#load dataset
+beta_NTI_df <- read.csv("D:/Users/juliette.ohan/Desktop/2_Saltheaps_(Ohan)/Experiments/Scripts_(R_and_Bioinformatics)/R/betaNTI/b_NTI_all.csv", 
+                        header = TRUE, 
+                        sep = ",",
+                        dec = ".")
+
+#order the site names
+beta_NTI_df$label <- factor(beta_NTI_df$label, levels =c("OD_heap","OD_initial", "OD_biocrust", "WT_heap", "WT_initial", "WT_biocrust"))
+
+
+#plot
+bNTI_plot <- ggplot(beta_NTI_df, aes(x=label, y=bNTI)) + 
+  geom_boxplot() +
+  #add axis labels
+  xlab ("site") + ylab ("βNTI") +
+    #add points
+   #geom_jitter(color="black", size=0.4, alpha=0.9) +
+  #add reference lines
+  geom_hline(yintercept = 2, linetype = 2) +
+  geom_hline(yintercept = -2, linetype = 2) 
+
+#make the text size good
+bNTI_plot +   
+  #increase font size overall
+  #theme(text = element_text(size = 20))
+  #only change axis titles 
+  theme(axis.title = element_text(size = 20))  +
+  #change axis labels
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.text.x = element_text(size = 15)) +
+  #only change legend title
+  theme(legend.title = element_text(size = 20)) +
+  #only change legend text
+  theme(legend.text = element_text(size = 20))   
+
+
+#try a violin plot for fun to see the distribution-----
+
+library(tidyverse)
+library(viridis)
+
+beta_NTI_df %>%
+  ggplot( aes(x=label, y=bNTI)) +
+    geom_violin() +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6, option="A") +
+   # theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    ggtitle("Violin chart") +
+    xlab("")
+
+
+```
