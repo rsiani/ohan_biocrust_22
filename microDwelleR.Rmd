@@ -24,23 +24,40 @@ pacman::p_load(
 # a minimal theme
 
 my_theme <- theme_minimal() +
-        theme(plot.margin = margin(3, 5, 0, 3),
-              text = element_text(size = 30,
-                                  family = "Fira Sans",
-                                  color = "#212121"),
-              panel.grid.major = element_blank(),
-              panel.grid.minor = element_blank(),
-              axis.title.x = element_text(hjust = 1),
-              axis.title.y = element_text(hjust = 1),
-              legend.position = "bottom",
-              legend.justification = c(1, 0),
-              legend.margin = margin(0, 5, 3, 5),
-              legend.title = element_blank(),
-              panel.spacing.x = unit(3, "lines"),
-              panel.spacing.y = unit(3, "lines"),
-              axis.line = element_blank(),
-              panel.border = element_rect(color = "#212121", linewidth = 2 , fill = NA)
-        )
+  theme(
+    line = element_line(linewidth = 1.5),
+    plot.margin = margin(1, 1, 1, 1, unit = "cm"),
+    text = element_text(size = 16,
+                        family = "Arial",
+                        color = "#212121"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom",
+    legend.justification = c(1, 0),
+    legend.margin = margin(0, 5, 3, 5),
+    legend.title = element_blank(),
+    panel.spacing.x = unit(3, "lines"),
+    panel.spacing.y = unit(3, "lines"),
+    axis.line = element_blank(),
+    panel.border = element_rect(color = "#212121", linewidth = 1.5 , fill = NA),
+    axis.text.x = element_text(size = 16,
+                        family = "Arial",
+                        color = "#212121"),
+    axis.text.y = element_text(size = 16,
+                        family = "Arial",
+                        color = "#212121"),
+    axis.title.x = element_text(size = 16,
+                        family = "Arial",
+                        color = "#212121", 
+                        hjust = 1),
+    axis.title.y = element_text(size = 16,
+                        family = "Arial",
+                        color = "#212121", 
+                        hjust = 1),
+    strip.text = element_text(size = 16,
+                        family = "Arial",
+                        color = "#212121")
+  )
 
 theme_set(my_theme)
 
@@ -237,7 +254,7 @@ summarize_phyloseq(phytted)
 
 phytted =
   phytted %>% 
-  prune_taxa(prevalence(., detection  = 0) >= 0.1, .)
+  prune_taxa(microbiome::prevalence(., detection  = 0) >= 0.1, .)
 
 summarize_phyloseq(phytted)
 
@@ -334,7 +351,34 @@ ggpubr::compare_means(
 
 # boxplots
 
-ggplot(alpha_frame %>% 
+div_list =
+  alpha_frame %>% 
+  group_by(name) %>% 
+  nest() %>% 
+  mutate(plotted = 
+           map(data, 
+               ~ ggplot(.x,
+                        aes(x = type,
+                            y = value,
+                            fill = type)) +
+                 scale_shape_manual(values = c(21, 23)) +
+                 geom_boxplot(aes(fill = type),
+                              outlier.shape = NA, alpha = 1,
+                              linewidth = 1.5,
+                              color = "#212121") +
+                 scale_fill_manual(values = pal_type) +
+                 theme(legend.position = "none",
+                       axis.title.y = element_blank(),
+                       axis.title.x = element_blank()) +
+                 facet_wrap(~ site) +
+                 ggtitle(name)))
+
+div_list$plotted[[1]] + div_list$plotted[[2]] +
+  div_list$plotted[[3]] + div_list$plotted[[4]] +
+  plot_layout(ncol = 2, nrow = 2)
+
+a = 
+  ggplot(alpha_frame %>% 
          filter(
            name %in%
              c("chao1",
@@ -344,35 +388,45 @@ ggplot(alpha_frame %>%
        aes(x = type,
            y = value,
            fill = type,
+           color = type,
            title = type)) +
-  geom_jitter(aes(shape = site), size = 7.5) +
+  geom_path(aes(linetype = site,
+                group = site),
+            stat = "summary", color = "#757575", linewidth = 1.5,
+            position = position_dodge(0.5)) +
   scale_shape_manual(values = c(21, 23)) +
-  geom_boxplot(outlier.shape = NA, alpha = .1, color = "#757575") +
-  scale_fill_manual(values = pal_type) +
+  geom_errorbar(stat = "summary",
+                aes(group = site),
+            position = position_dodge(0.5),
+            color = "#757575",
+            linewidth = 1.5,
+            width = .1) +
+  geom_point(aes(shape = site), stat = "summary", size = 9,
+            position = position_dodge(0.5)) +
+  scale_color_manual(values = pal_type, aesthetics = c("color", "fill")) +
   ggpubr::stat_compare_means(
     aes(label = after_stat(p.adj)),
-    ref.group = "heap",
+    ref.group = "heap", 
     hide.ns = T,
     method.args = list(p.adjust.methods = "fdr"),
     method = "wilcox.test",
-    size = 10,
+    size = 5,
     vjust = 1,
-    family = "Fira Sans"
+    family = "Arial"
   ) +
   theme(legend.position = "none",
         axis.title.x = element_blank(),
         axis.title.y = element_blank()) +
   facet_wrap(
     ~ name,
-    scales = "free", ncol = 2) -> a
+    scales = "free", ncol = 2) 
 
 # save all in a pdf
 
-cairo_pdf("OUT/alphaDiversity_united.pdf",
-    width = 16,
-    height = 16,
-    onefile = T)
-a
+tiff("OUT/fig3.tiff", width = 360, height = 360, units = "mm", res = 1000)
+div_list$plotted[[1]] + div_list$plotted[[2]] +
+  div_list$plotted[[3]] + div_list$plotted[[4]] +
+  plot_layout(ncol = 2, nrow = 2)
 dev.off()
 
 ```
@@ -401,7 +455,7 @@ sampling_environment2 =
   `colnames<-`(c("pH", "EC", "Chla", "TDN", "DOC"))
 
 count_table =
-  abundances(phytted, 
+  microbiome::abundances(phytted, 
              "compositional") %>% 
   as.data.frame()
 
@@ -440,7 +494,7 @@ X_WT =
 ## CCA
 
 res_cca = 
-  cca(X ~ ., data = Y, scale = T)
+  vegan::cca(X ~ ., data = Y, scale = T)
 
 coordinates = 
   res_cca$CCA$wa %>% 
@@ -471,21 +525,22 @@ plot_1 =
                    y = 0,
                    xend = CCA1,
                    yend = CCA2),
-               arrow = arrow(length = unit(0.1, "cm")),
+               arrow = arrow(length = unit(3, "pt")),
                linejoin = "mitre",
                lineend = "butt",
-               color = "#bbbbbb") +
+               linewidth = 1.5,
+               color = "#757575") +
   ggrepel::geom_text_repel(data = arrows,
             aes(x = CCA1,
                 y = CCA2,
                 label = variable),
             force = 2,
-            size = 12,
+            size = 5,
             color = "#333333") +
   scale_shape_manual(values = c(18, 20))
 
 res_cca1 = 
-  cca(X_OD ~ ., data = Y_OD, scale = T)
+  vegan::cca(X_OD ~ ., data = Y_OD, scale = T)
 
 coordinates1 = 
   res_cca1$CCA$wa %>% 
@@ -504,33 +559,33 @@ arrows1 =
   rownames_to_column("variable")
 
 plot_1b =
-  ggplot(data = coordinates1) +
+  ggplot(data = coordinates1)  +
   geom_point(aes(x = CCA1,
                  y = CCA2,
-                 color = type,
-                 shape = site),
+                 color = type),
              size = 9) +
   scale_color_manual(values = pal_type) +
-  geom_segment(data = arrows1,
+  geom_segment(data = arrows,
                aes(x = 0,
                    y = 0,
                    xend = CCA1,
                    yend = CCA2),
-               arrow = arrow(length = unit(0.1, "cm")),
+               arrow = arrow(length = unit(3, "pt")),
                linejoin = "mitre",
                lineend = "butt",
-               color = "#bbbbbb") +
-  ggrepel::geom_text_repel(data = arrows1,
+               linewidth = 1.5,
+               color = "#757575") +
+  ggrepel::geom_text_repel(data = arrows,
             aes(x = CCA1,
                 y = CCA2,
                 label = variable),
             force = 2,
-            size = 12,
+            size = 5,
             color = "#333333") +
   scale_shape_manual(values = c(18))
 
 res_cca2 = 
-  cca(X_WT ~ ., data = Y_WT, scale = T)
+  vegan::cca(X_WT ~ ., data = Y_WT, scale = T)
 
 coordinates2 = 
   res_cca2$CCA$wa %>% 
@@ -549,41 +604,57 @@ arrows2 =
   rownames_to_column("variable")
 
 plot_1c =
-  ggplot(data = coordinates2) +
+  ggplot(data = coordinates2)  +
   geom_point(aes(x = CCA1,
                  y = CCA2,
-                 color = type,
-                 shape = site),
+                 color = type),
              size = 9) +
   scale_color_manual(values = pal_type) +
-  geom_segment(data = arrows2,
+  geom_segment(data = arrows,
                aes(x = 0,
                    y = 0,
                    xend = CCA1,
                    yend = CCA2),
-               arrow = arrow(length = unit(0.1, "cm")),
+               arrow = arrow(length = unit(3, "pt")),
                linejoin = "mitre",
                lineend = "butt",
-               color = "#bbbbbb") +
-  ggrepel::geom_text_repel(data = arrows2,
+               linewidth = 1.5,
+               color = "#757575") +
+  ggrepel::geom_text_repel(data = arrows,
             aes(x = CCA1,
                 y = CCA2,
                 label = variable),
             force = 2,
-            size = 12,
-            color = "#333333",
-            max.overlaps = Inf) +
+            size = 5,
+            color = "#333333") +
   scale_shape_manual(values = c(20))
 
 list_plots  = list(plot_1, plot_1b, plot_1c)
 
 
-cairo_pdf("OUT/cca.pdf",
-          width = 16,
-          height = 16,
-          onefile = T)
-list_plots
+tiff("OUT/fig2.tiff", 360, 360, units = "mm", res = 1000,)
+plot_1
 dev.off()
+
+## checking for phylogenetic signal
+
+summary(res_cca)
+
+#read in otu table from phyloseq object 
+otu = vegan::scores(res_cca, choices = c(1:5))$species
+
+## read in the phylogeny
+phylo = phy_tree(phytted);
+phylo; # a summary of the phylogeny
+#plot.phylo(phylo,typ="fan"); # a quick plot
+rooted.phy = ape::root(phy_tree(phytted), 582, resolve.root = T)
+
+
+res.phylosignal_cca = 
+  picante::multiPhylosignal(otu[rooted.phy$tip.label,], rooted.phy, reps = 999, checkdata=TRUE)
+
+
+write.csv(res.phylosignal_cca, "multiPhylosignal.csv")
 
 ```
 
@@ -683,7 +754,7 @@ a = ggplot(species,
            y = Axis.2,
            color = ifelse(kruskal_filter <= 0.05, "DA", "NS"),
            alpha = Overall)) + 
-  geom_jitter(shape = 20) +
+  geom_point(shape = 20) +
   scale_color_manual(values = c("#FF82AB", "#666666")) +
   ggrepel::geom_text_repel(
     aes(Axis.1, Axis.2,
@@ -747,21 +818,26 @@ b =
                x = site)) +
   geom_point(
     aes(size = relAbu,
-        color = type),
+        fill = type),
     alpha = 2/3,
-    show.legend = T) +
-  scale_color_manual(values = pal_type) +
-  scale_size(range = c(0, 20)) +
+    show.legend = T,
+    shape = 21,
+    stroke = 0.67,
+    color = "#333333") +
+  scale_fill_manual(values = pal_type) +
+  scale_size(range = c(0, 20), labels = scales::percent_format()) +
   facet_grid(cols = vars(type),
              rows = vars(Phylum),
              scales = "free",
              space = "free") +
-  theme(legend.position = "none",
+  theme(legend.position = "bottom",
         strip.text = element_blank(),
         axis.title.y = element_blank(),
         panel.border = element_blank(),
+        legend.text = element_text(family = "Arial", size = 16),
         panel.spacing.y = unit(0.5, "lines"),
-        panel.spacing.x = unit(0, "lines")) 
+        panel.spacing.x = unit(0, "lines")) +
+  guides(fill = "none")
 
 
 c =
@@ -775,7 +851,7 @@ c =
   facet_grid(rows = vars(Phylum), scales = "free", space = "free") +
   theme(legend.position = "right",
         legend.box = "horizontal",
-        legend.text = element_text(family = "Fira Sans", size = 30),
+        legend.text = element_text(family = "Arial", size = 16),
         legend.title = element_blank(),
         strip.text = element_blank(),
         panel.spacing.y = unit(0.5, "lines")) +
@@ -785,11 +861,16 @@ bc = b + c +
   plot_layout(widths = c(4, 1))
 
 
-cairo_pdf("OUT/pcoa_rf_feb.pdf",
-          width = 24,
-          height = 24,
-          onefile = T)
-list(a, bc)
+tiff("OUT/fig4a.tiff", 360, 360, "mm", res = 1000)
+a
+dev.off()
+
+tiff("OUT/fig5c.tiff", 360, 360, "mm", res = 1000)
+bc
+dev.off()
+
+cairo_pdf("OUT/fig5c.pdf", 1600, 1600)
+bc
 dev.off()
 
 
